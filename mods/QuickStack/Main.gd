@@ -21,6 +21,7 @@ var _drag_selecting: bool = false
 var _drag_selected: Array = []
 var _drag_source_grid = null
 var _drag_markers: Array = []
+var _prev_ctrl_lmb: bool = false
 
 # MCM
 var _mcm_helpers = null
@@ -95,11 +96,17 @@ func _process(_delta):
 		if store_all:
 			store_all.visible = container_open
 
-	# Drag-select tracking (runs every frame while dragging)
-	if _drag_selecting:
+	# Ctrl+LMB drag-select (all in _process to avoid input conflicts with game)
+	var ctrl_lmb = Input.is_key_pressed(KEY_CTRL) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	if ctrl_lmb and not _prev_ctrl_lmb and not _drag_selecting:
+		var hover_grid = _interface.GetHoverGrid()
+		if hover_grid != null:
+			_start_drag_select(hover_grid)
+	elif ctrl_lmb and _drag_selecting:
 		_try_select_item_at_mouse()
-		if not Input.is_key_pressed(KEY_CTRL) or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-			_finish_drag_select()
+	elif not ctrl_lmb and _drag_selecting:
+		_finish_drag_select()
+	_prev_ctrl_lmb = ctrl_lmb
 
 # ─── UI Injection ───
 
@@ -196,20 +203,6 @@ func _make_button(text: String, callback: Callable) -> Button:
 func _input(event):
 	if _interface == null:
 		return
-
-	# Ctrl+LMB drag-select (intercepted here before _gui_input reaches items)
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed and event.ctrl_pressed:
-			var hover_grid = _interface.GetHoverGrid()
-			if hover_grid != null:
-				_start_drag_select(hover_grid)
-				get_viewport().set_input_as_handled()
-				return
-		elif not event.pressed and _drag_selecting:
-			_finish_drag_select()
-			get_viewport().set_input_as_handled()
-			return
-
 	if cfg_input_type == 0:
 		# Keyboard mode
 		if event is InputEventKey and event.pressed and not event.echo:
@@ -307,6 +300,9 @@ func _finish_drag_select():
 	var failed: int = 0
 	for item in _drag_selected:
 		if not is_instance_valid(item):
+			continue
+		# Skip items the game may have picked up (no longer in grid)
+		if item.get_parent() != _drag_source_grid:
 			continue
 		if _interface.AutoStack(item.slotData, target_grid):
 			_drag_source_grid.Pick(item)
