@@ -22,6 +22,10 @@ var _drag_selected: Array = []
 var _drag_source_grid = null
 var _drag_markers: Array = []
 var _prev_ctrl_lmb: bool = false
+var _drag_pending: bool = false
+var _drag_start_pos: Vector2 = Vector2.ZERO
+var _drag_pending_grid = null
+const DRAG_THRESHOLD: float = 8.0
 
 # MCM
 var _mcm_helpers = null
@@ -98,14 +102,24 @@ func _process(_delta):
 
 	# Ctrl+LMB drag-select (all in _process to avoid input conflicts with game)
 	var ctrl_lmb = Input.is_key_pressed(KEY_CTRL) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-	if ctrl_lmb and not _prev_ctrl_lmb and not _drag_selecting:
+	if ctrl_lmb and not _prev_ctrl_lmb and not _drag_selecting and not _drag_pending:
 		var hover_grid = _interface.GetHoverGrid()
 		if hover_grid != null:
-			_start_drag_select(hover_grid)
+			_drag_pending = true
+			_drag_start_pos = _drag_source_grid.get_local_mouse_position() if _drag_source_grid else hover_grid.get_local_mouse_position()
+			_drag_pending_grid = hover_grid
+	elif ctrl_lmb and _drag_pending and not _drag_selecting:
+		var current_pos = _drag_pending_grid.get_local_mouse_position()
+		if current_pos.distance_to(_drag_start_pos) >= DRAG_THRESHOLD:
+			_drag_pending = false
+			_start_drag_select(_drag_pending_grid)
 	elif ctrl_lmb and _drag_selecting:
 		_try_select_item_at_mouse()
 	elif not ctrl_lmb and _drag_selecting:
 		_finish_drag_select()
+	elif not ctrl_lmb and _drag_pending:
+		_drag_pending = false
+		_drag_pending_grid = null
 	_prev_ctrl_lmb = ctrl_lmb
 
 # ─── UI Injection ───
@@ -331,6 +345,8 @@ func _cancel_drag_select():
 	_drag_selected = []
 	_drag_selecting = false
 	_drag_source_grid = null
+	_drag_pending = false
+	_drag_pending_grid = null
 
 # ─── Quick Stack (Transfer) Logic ───
 
