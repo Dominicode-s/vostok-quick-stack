@@ -1,5 +1,9 @@
 # Changelog
 
+### v2.1.1
+- Fixed Ctrl+click triggering multi-select on single items — now requires a small drag before activating
+- Single Ctrl+clicks pass through to the game normally
+
 ### v2.1.0
 - Added Ctrl+LMB drag-select to transfer multiple items at once
 - Fixed invisible item bug and game crashes from input conflicts
