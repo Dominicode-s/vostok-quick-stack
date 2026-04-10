@@ -20,8 +20,6 @@ var _inventory_injected: bool = false
 var _drag_selecting: bool = false
 var _drag_selected: Array = []
 var _drag_source_grid = null
-var _inv_drag_overlay: Control = null
-var _con_drag_overlay: Control = null
 
 # MCM
 var _mcm_helpers = null
@@ -55,7 +53,7 @@ func _process(_delta):
 			_interface = null
 			_container_injected = false
 			_inventory_injected = false
-			_cleanup_drag_overlays()
+			_cancel_drag_select()
 		var core_ui = scene.get_node_or_null("Core/UI")
 		if core_ui:
 			for child in core_ui.get_children():
@@ -96,10 +94,7 @@ func _process(_delta):
 		if store_all:
 			store_all.visible = container_open
 
-	# Drag overlay management
-	_update_drag_overlays()
-
-	# Active drag-select tracking
+	# Drag-select tracking (runs every frame while dragging)
 	if _drag_selecting:
 		_try_select_item_at_mouse()
 		if not Input.is_key_pressed(KEY_CTRL) or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
@@ -200,6 +195,20 @@ func _make_button(text: String, callback: Callable) -> Button:
 func _input(event):
 	if _interface == null:
 		return
+
+	# Ctrl+LMB drag-select (intercepted here before _gui_input reaches items)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed and event.ctrl_pressed:
+			var hover_grid = _interface.GetHoverGrid()
+			if hover_grid != null:
+				_start_drag_select(hover_grid)
+				get_viewport().set_input_as_handled()
+				return
+		elif not event.pressed and _drag_selecting:
+			_finish_drag_select()
+			get_viewport().set_input_as_handled()
+			return
+
 	if cfg_input_type == 0:
 		# Keyboard mode
 		if event is InputEventKey and event.pressed and not event.echo:
@@ -229,45 +238,6 @@ func _hotkey_sort():
 
 # ─── Ctrl+LMB Drag Select ───
 
-func _create_drag_overlay(grid) -> Control:
-	var overlay = Control.new()
-	overlay.name = "QS_DragOverlay"
-	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	overlay.mouse_filter = Control.MOUSE_FILTER_PASS
-	overlay.gui_input.connect(_on_drag_overlay_input.bind(grid))
-	grid.add_child(overlay)
-	return overlay
-
-func _update_drag_overlays():
-	var inv_grid = _interface.inventoryGrid if _interface else null
-	var con_grid = _interface.containerGrid if _interface else null
-	var ctrl_held = Input.is_key_pressed(KEY_CTRL)
-
-	if inv_grid and is_instance_valid(inv_grid):
-		if _inv_drag_overlay == null or not is_instance_valid(_inv_drag_overlay):
-			_inv_drag_overlay = _create_drag_overlay(inv_grid)
-		if ctrl_held:
-			_inv_drag_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-			_inv_drag_overlay.move_to_front()
-		else:
-			_inv_drag_overlay.mouse_filter = Control.MOUSE_FILTER_PASS
-
-	if con_grid and is_instance_valid(con_grid):
-		if _con_drag_overlay == null or not is_instance_valid(_con_drag_overlay):
-			_con_drag_overlay = _create_drag_overlay(con_grid)
-		if ctrl_held:
-			_con_drag_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-			_con_drag_overlay.move_to_front()
-		else:
-			_con_drag_overlay.mouse_filter = Control.MOUSE_FILTER_PASS
-
-func _on_drag_overlay_input(event: InputEvent, grid):
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
-			_start_drag_select(grid)
-		elif _drag_selecting:
-			_finish_drag_select()
-
 func _start_drag_select(grid):
 	_drag_selecting = true
 	_drag_selected = []
@@ -283,7 +253,7 @@ func _try_select_item_at_mouse():
 			var rect = Rect2(child.position, child.size)
 			if rect.has_point(mouse_pos):
 				_drag_selected.append(child)
-				child.modulate = Color(0.6, 1.0, 0.6, 0.9)
+				child.modulate = Color(0.3, 1.0, 0.3, 1.0)
 				break
 
 func _finish_drag_select():
@@ -339,13 +309,6 @@ func _finish_drag_select():
 
 	_drag_selected = []
 	_drag_source_grid = null
-
-func _cleanup_drag_overlays():
-	_cancel_drag_select()
-	_remove_node(_inv_drag_overlay)
-	_remove_node(_con_drag_overlay)
-	_inv_drag_overlay = null
-	_con_drag_overlay = null
 
 func _cancel_drag_select():
 	for item in _drag_selected:
