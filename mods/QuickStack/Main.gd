@@ -1,0 +1,551 @@
+extends Node
+
+# Quick Stack & Sort — Pure autoload, no script overrides
+# Container: Sort button (sorts + auto-stacks)
+# Inventory: Sort button + Transfer button (quick stack to container)
+# MCM: configurable hotkey for sort (applies to hovered grid)
+
+var gameData = preload("res://Resources/GameData.tres")
+
+var _interface = null
+var _last_scene: String = ""
+
+# UI state
+var _container_btns: HBoxContainer = null
+var _inventory_btns: HBoxContainer = null
+var _container_injected: bool = false
+var _inventory_injected: bool = false
+
+# MCM
+var _mcm_helpers = null
+const MCM_FILE_PATH = "user://MCM/QuickStackSort"
+const MCM_MOD_ID = "QuickStackSort"
+const SORT_ACTION = "quick_sort"
+var cfg_sort_key: int = KEY_Z
+var cfg_input_type: int = 0  # 0 = Keyboard, 1 = Mouse Button
+var cfg_mouse_btn: int = MOUSE_BUTTON_XBUTTON1  # Mouse 4
+
+const MOUSE_BTN_OPTIONS = ["Mouse 4 (Back)", "Mouse 5 (Forward)", "Middle Click"]
+const MOUSE_BTN_VALUES = [MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2, MOUSE_BUTTON_MIDDLE]
+
+# ─── Initialization ───
+
+func _ready():
+	Engine.set_meta("QuickStackMain", self)
+	_mcm_helpers = _try_load_mcm()
+	if _mcm_helpers:
+		_register_mcm()
+	_register_hotkey(cfg_sort_key)
+
+func _process(_delta):
+	# Find Interface (under Core/UI in map scenes)
+	if _interface == null:
+		var scene = get_tree().current_scene
+		if scene == null:
+			return
+		if scene.name != _last_scene:
+			_last_scene = scene.name
+			_interface = null
+			_container_injected = false
+			_inventory_injected = false
+		var core_ui = scene.get_node_or_null("Core/UI")
+		if core_ui:
+			for child in core_ui.get_children():
+				if child.get("containerGrid") != null:
+					_interface = child
+					print("[QuickStack] Found Interface: Core/UI/", child.name)
+					break
+	if _interface == null:
+		return
+
+	# Track container open/close for button injection
+	var container_ui = _interface.get_node_or_null("Container")
+	var inventory_ui = _interface.get_node_or_null("Inventory")
+	var container_open = container_ui != null and container_ui.visible and _interface.container != null
+	var inventory_open = inventory_ui != null and inventory_ui.visible
+
+	# Container buttons: Sort only
+	if container_open and not _container_injected:
+		_inject_container_buttons(container_ui)
+	elif not container_open and _container_injected:
+		_remove_node(_container_btns)
+		_container_btns = null
+		_container_injected = false
+
+	# Inventory buttons: Sort + Transfer (transfer only when container is open)
+	if inventory_open and not _inventory_injected:
+		_inject_inventory_buttons(inventory_ui, container_open)
+	elif not inventory_open and _inventory_injected:
+		_remove_node(_inventory_btns)
+		_inventory_btns = null
+		_inventory_injected = false
+	# Update transfer button visibility when container opens/closes
+	elif _inventory_injected and _inventory_btns:
+		var transfer = _inventory_btns.get_node_or_null("TransferBtn")
+		var store_all = _inventory_btns.get_node_or_null("StoreAllBtn")
+		if transfer:
+			transfer.visible = container_open
+		if store_all:
+			store_all.visible = container_open
+
+	# (hotkey handled in _input)
+
+# ─── UI Injection ───
+
+func _inject_container_buttons(container_ui):
+	# Container Header: y=-32 to 0, width=256
+	_container_btns = HBoxContainer.new()
+	_container_btns.name = "QS_ContainerBtns"
+	_container_btns.add_theme_constant_override("separation", 4)
+	_container_btns.position = Vector2(0, -56)
+	_container_btns.size = Vector2(256, 22)
+
+	var sort_btn = _make_button("↕ Sort", _on_sort_container)
+	sort_btn.tooltip_text = "Sort & stack items in container"
+	_container_btns.add_child(sort_btn)
+
+	var take_btn = _make_button("⇒ Take All", _on_take_all)
+	take_btn.tooltip_text = "Take all items from container to inventory"
+	_container_btns.add_child(take_btn)
+
+	container_ui.add_child(_container_btns)
+	_container_injected = true
+
+func _inject_inventory_buttons(inventory_ui, container_open: bool):
+	# Inventory Header: y=-32 to 0, width=320
+	_inventory_btns = HBoxContainer.new()
+	_inventory_btns.name = "QS_InventoryBtns"
+	_inventory_btns.add_theme_constant_override("separation", 4)
+	_inventory_btns.position = Vector2(0, -56)
+	_inventory_btns.size = Vector2(320, 22)
+
+	var sort_btn = _make_button("↕ Sort", _on_sort_inventory)
+	sort_btn.tooltip_text = "Sort & stack items in inventory"
+	_inventory_btns.add_child(sort_btn)
+
+	var transfer_btn = _make_button("⇄ Transfer", _on_quick_stack)
+	transfer_btn.name = "TransferBtn"
+	transfer_btn.tooltip_text = "Transfer matching items to container"
+	transfer_btn.visible = container_open
+	_inventory_btns.add_child(transfer_btn)
+
+	var store_btn = _make_button("⇐ Store All", _on_store_all)
+	store_btn.name = "StoreAllBtn"
+	store_btn.tooltip_text = "Store all inventory items into container"
+	store_btn.visible = container_open
+	_inventory_btns.add_child(store_btn)
+
+	inventory_ui.add_child(_inventory_btns)
+	_inventory_injected = true
+
+func _remove_node(node):
+	if node and is_instance_valid(node):
+		node.queue_free()
+
+func _make_button(text: String, callback: Callable) -> Button:
+	var btn = Button.new()
+	btn.text = text
+	btn.custom_minimum_size = Vector2(70, 22)
+
+	var style_normal = StyleBoxFlat.new()
+	style_normal.bg_color = Color(0.15, 0.15, 0.15, 0.9)
+	style_normal.border_color = Color(0.4, 0.4, 0.4, 0.8)
+	style_normal.set_border_width_all(1)
+	style_normal.set_corner_radius_all(2)
+	style_normal.set_content_margin_all(3)
+
+	var style_hover = StyleBoxFlat.new()
+	style_hover.bg_color = Color(0.25, 0.25, 0.25, 0.95)
+	style_hover.border_color = Color(0.6, 0.6, 0.6, 0.9)
+	style_hover.set_border_width_all(1)
+	style_hover.set_corner_radius_all(2)
+	style_hover.set_content_margin_all(3)
+
+	var style_pressed = StyleBoxFlat.new()
+	style_pressed.bg_color = Color(0.1, 0.3, 0.1, 0.95)
+	style_pressed.border_color = Color(0.4, 0.7, 0.4, 0.9)
+	style_pressed.set_border_width_all(1)
+	style_pressed.set_corner_radius_all(2)
+	style_pressed.set_content_margin_all(3)
+
+	btn.add_theme_stylebox_override("normal", style_normal)
+	btn.add_theme_stylebox_override("hover", style_hover)
+	btn.add_theme_stylebox_override("pressed", style_pressed)
+	btn.add_theme_font_size_override("font_size", 11)
+	btn.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85))
+	btn.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+
+	btn.pressed.connect(callback)
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.focus_mode = Control.FOCUS_NONE
+	return btn
+
+# ─── Input handler (more reliable than polling in _process) ───
+
+func _input(event):
+	if _interface == null:
+		return
+	if cfg_input_type == 0:
+		# Keyboard mode
+		if event is InputEventKey and event.pressed and not event.echo:
+			if event.keycode == cfg_sort_key:
+				_hotkey_sort()
+	else:
+		# Mouse button mode
+		if event is InputEventMouseButton and event.pressed:
+			if event.button_index == cfg_mouse_btn:
+				_hotkey_sort()
+
+# ─── Hotkey Sort ───
+
+func _hotkey_sort():
+	if _interface == null:
+		return
+	# Use GetHoverGrid() which checks mouse position against all visible grids
+	var hover_grid = _interface.GetHoverGrid()
+	if hover_grid == null:
+		return
+	var inv_grid = _interface.inventoryGrid
+	var con_grid = _interface.containerGrid
+	if hover_grid == inv_grid:
+		_on_sort_inventory()
+	elif hover_grid == con_grid:
+		_on_sort_container()
+
+# ─── Quick Stack (Transfer) Logic ───
+
+func _on_quick_stack():
+	if _interface == null or _interface.container == null:
+		return
+
+	var inv_grid = _interface.inventoryGrid
+	var con_grid = _interface.containerGrid
+	if inv_grid == null or con_grid == null:
+		return
+
+	# Build set of item files already in the container
+	var container_files: Dictionary = {}
+	for element in con_grid.get_children():
+		if element is Item:
+			container_files[element.slotData.itemData.file] = true
+
+	if container_files.is_empty():
+		_play_error()
+		return
+
+	# Collect inventory items that match container contents
+	var to_transfer: Array = []
+	for element in inv_grid.get_children():
+		if element is Item:
+			if container_files.has(element.slotData.itemData.file):
+				to_transfer.append(element)
+
+	if to_transfer.is_empty():
+		_play_error()
+		return
+
+	var transferred: int = 0
+	for inv_item in to_transfer:
+		if _interface.AutoStack(inv_item.slotData, con_grid):
+			inv_grid.Pick(inv_item)
+			inv_item.queue_free()
+			transferred += 1
+		elif _interface.AutoPlace(inv_item, con_grid, inv_grid, false):
+			transferred += 1
+
+	if transferred > 0:
+		_play_click()
+		_update_ui()
+		_flash_result("Transferred %d items" % transferred)
+	else:
+		_play_error()
+
+# ─── Transfer All Logic ───
+
+func _on_take_all():
+	_transfer_all(_interface.containerGrid, _interface.inventoryGrid, "Took")
+
+func _on_store_all():
+	_transfer_all(_interface.inventoryGrid, _interface.containerGrid, "Stored")
+
+func _transfer_all(source_grid, target_grid, verb: String):
+	if _interface == null or _interface.container == null:
+		return
+	if source_grid == null or target_grid == null:
+		return
+
+	var items: Array = []
+	for element in source_grid.get_children():
+		if element is Item:
+			items.append(element)
+
+	if items.is_empty():
+		_play_error()
+		return
+
+	var transferred: int = 0
+	var failed: int = 0
+	for item in items:
+		# Try stacking first, then placing
+		if _interface.AutoStack(item.slotData, target_grid):
+			source_grid.Pick(item)
+			item.queue_free()
+			transferred += 1
+		elif _interface.AutoPlace(item, target_grid, source_grid, false):
+			transferred += 1
+		else:
+			failed += 1
+
+	if transferred > 0:
+		_play_click()
+		_update_ui()
+		if failed > 0:
+			_flash_result("%s %d, %d didn't fit" % [verb, transferred, failed])
+		else:
+			_flash_result("%s %d items" % [verb, transferred])
+	else:
+		_play_error()
+		_flash_result("No room!")
+
+# ─── Sort Logic (sort + auto-stack) ───
+
+func _on_sort_container():
+	if _interface == null or _interface.container == null:
+		return
+	_sort_grid(_interface.containerGrid)
+
+func _on_sort_inventory():
+	if _interface == null:
+		return
+	_sort_grid(_interface.inventoryGrid)
+
+func _sort_grid(grid):
+	# Collect all items and their slot data
+	var items_data: Array = []
+	var children = grid.get_children().duplicate()
+	for element in children:
+		if element is Item:
+			items_data.append(element.slotData.duplicate())
+
+	if items_data.is_empty():
+		_play_error()
+		return
+
+	# Remove all items from grid
+	for element in children:
+		if element is Item:
+			grid.Pick(element)
+			element.queue_free()
+
+	# Auto-stack: merge stackable items before placing
+	var merged: Array = _merge_stacks(items_data)
+
+	# Sort: largest area first, then widest, then tallest
+	merged.sort_custom(func(a, b):
+		var area_a = a.itemData.size.x * a.itemData.size.y
+		var area_b = b.itemData.size.x * b.itemData.size.y
+		if area_a != area_b:
+			return area_a > area_b
+		if a.itemData.size.x != b.itemData.size.x:
+			return a.itemData.size.x > b.itemData.size.x
+		return a.itemData.size.y > b.itemData.size.y
+	)
+
+	# Re-create items in sorted order
+	var placed: int = 0
+	var dropped: int = 0
+	for slot_data in merged:
+		if _interface.Create(slot_data, grid, true):
+			placed += 1
+		else:
+			dropped += 1
+
+	_play_click()
+	_update_ui()
+	if dropped > 0:
+		_flash_result("Sorted %d, dropped %d" % [placed, dropped])
+	else:
+		_flash_result("Sorted %d items" % placed)
+
+func _merge_stacks(items: Array) -> Array:
+	# Group stackable items by file, merge amounts
+	var stacks: Dictionary = {}
+	var result: Array = []
+
+	for slot in items:
+		if slot.itemData.stackable:
+			var file = slot.itemData.file
+			if not stacks.has(file):
+				stacks[file] = []
+			stacks[file].append(slot)
+		else:
+			result.append(slot)
+
+	# Merge each stackable group into minimum number of full stacks
+	for file in stacks:
+		var group = stacks[file]
+		var total_amount: int = 0
+		var template = group[0]
+		for slot in group:
+			total_amount += slot.amount
+
+		var max_stack = template.itemData.maxAmount
+		while total_amount > 0:
+			var new_slot = template.duplicate()
+			new_slot.amount = min(total_amount, max_stack)
+			total_amount -= new_slot.amount
+			result.append(new_slot)
+
+	return result
+
+# ─── Audio & UI helpers ───
+
+func _play_click():
+	if _interface and _interface.has_method("PlayClick"):
+		_interface.PlayClick()
+
+func _play_error():
+	if _interface and _interface.has_method("PlayError"):
+		_interface.PlayError()
+
+func _update_ui():
+	if _interface:
+		_interface.UpdateUIDetails()
+		_interface.UpdateStats(true)
+
+# ─── Status Flash ───
+
+var _flash_panel: PanelContainer = null
+var _flash_label: Label = null
+var _flash_tween: Tween = null
+
+func _flash_result(text: String):
+	if _flash_panel == null:
+		# Background panel
+		_flash_panel = PanelContainer.new()
+		_flash_panel.name = "QuickStackFlash"
+
+		var style = StyleBoxFlat.new()
+		style.bg_color = Color(0.08, 0.08, 0.08, 0.85)
+		style.border_color = Color(0.3, 0.8, 0.3, 0.6)
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(4)
+		style.set_content_margin_all(6)
+		style.content_margin_left = 12
+		style.content_margin_right = 12
+		_flash_panel.add_theme_stylebox_override("panel", style)
+
+		# Label inside
+		_flash_label = Label.new()
+		_flash_label.add_theme_font_size_override("font_size", 12)
+		_flash_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
+		_flash_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_flash_panel.add_child(_flash_label)
+
+	if _flash_panel.get_parent():
+		_flash_panel.get_parent().remove_child(_flash_panel)
+
+	# Attach to whichever panel is visible, centered above the header
+	var target = _interface.get_node_or_null("Container")
+	if target and target.visible:
+		target.add_child(_flash_panel)
+	else:
+		target = _interface.get_node_or_null("Inventory")
+		if target and target.visible:
+			target.add_child(_flash_panel)
+
+	_flash_label.text = text
+
+	# Position centered above buttons after layout settles
+	await get_tree().process_frame
+	if is_instance_valid(_flash_panel) and _flash_panel.get_parent():
+		var parent_w = _flash_panel.get_parent().size.x
+		var panel_w = _flash_panel.size.x
+		_flash_panel.position = Vector2((parent_w - panel_w) / 2.0, -96)
+
+	_flash_panel.modulate = Color(1, 1, 1, 0)
+
+	if _flash_tween and _flash_tween.is_valid():
+		_flash_tween.kill()
+	_flash_tween = create_tween()
+	# Fade in
+	_flash_tween.tween_property(_flash_panel, "modulate", Color(1, 1, 1, 1), 0.15)
+	# Hold
+	_flash_tween.tween_interval(1.2)
+	# Fade out
+	_flash_tween.tween_property(_flash_panel, "modulate", Color(1, 1, 1, 0), 0.4)
+
+# ─── Hotkey Registration ───
+
+func _register_hotkey(key_code: int):
+	if not InputMap.has_action(SORT_ACTION):
+		InputMap.add_action(SORT_ACTION)
+	else:
+		InputMap.action_erase_events(SORT_ACTION)
+	var ev = InputEventKey.new()
+	ev.keycode = key_code
+	InputMap.action_add_event(SORT_ACTION, ev)
+
+# ─── MCM Integration ───
+
+func _try_load_mcm():
+	if ResourceLoader.exists("res://ModConfigurationMenu/Scripts/Doink Oink/MCM_Helpers.tres"):
+		return load("res://ModConfigurationMenu/Scripts/Doink Oink/MCM_Helpers.tres")
+	return null
+
+func _register_mcm():
+	var _config = ConfigFile.new()
+
+	_config.set_value("Dropdown", "cfg_input_type", {
+		"name" = "Sort Hotkey Type",
+		"tooltip" = "Use a keyboard key or mouse button for sorting",
+		"default" = 0,
+		"value" = 0,
+		"options" = ["Keyboard Key", "Mouse Button"],
+		"menu_pos" = 1
+	})
+
+	_config.set_value("Keycode", "cfg_sort_key", {
+		"name" = "Sort Key (Keyboard)",
+		"tooltip" = "Keyboard key to sort the hovered grid",
+		"default" = KEY_Z,
+		"value" = KEY_Z,
+		"menu_pos" = 2
+	})
+
+	_config.set_value("Dropdown", "cfg_mouse_btn", {
+		"name" = "Sort Button (Mouse)",
+		"tooltip" = "Mouse button to sort the hovered grid",
+		"default" = 0,
+		"value" = 0,
+		"options" = MOUSE_BTN_OPTIONS,
+		"menu_pos" = 3
+	})
+
+	if not FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
+		DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
+		_config.save(MCM_FILE_PATH + "/config.ini")
+	else:
+		_mcm_helpers.CheckConfigurationHasUpdated(MCM_MOD_ID, _config, MCM_FILE_PATH + "/config.ini")
+		_config.load(MCM_FILE_PATH + "/config.ini")
+
+	_apply_mcm_config(_config)
+
+	_mcm_helpers.RegisterConfiguration(
+		MCM_MOD_ID,
+		"Quick Stack & Sort",
+		MCM_FILE_PATH,
+		"Sort, stack, and transfer inventory items",
+		{"config.ini" = _on_mcm_save}
+	)
+
+func _on_mcm_save(config: ConfigFile):
+	_apply_mcm_config(config)
+
+func _apply_mcm_config(config: ConfigFile):
+	cfg_input_type = config.get_value("Dropdown", "cfg_input_type")["value"]
+	cfg_sort_key = config.get_value("Keycode", "cfg_sort_key")["value"]
+	var mouse_idx = config.get_value("Dropdown", "cfg_mouse_btn")["value"]
+	cfg_mouse_btn = MOUSE_BTN_VALUES[mouse_idx]
+	if cfg_input_type == 0:
+		_register_hotkey(cfg_sort_key)

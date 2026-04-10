@@ -1,0 +1,8 @@
+[mod]
+name="Quick Stack & Sort"
+id="quick-stack-sort"
+version="2.0.0"
+[autoload]
+QuickStackMain="res://mods/QuickStack/Main.gd"
+[updates]
+modworkshop=55986
