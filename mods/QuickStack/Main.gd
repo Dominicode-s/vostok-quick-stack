@@ -16,6 +16,13 @@ var _inventory_btns: HBoxContainer = null
 var _container_injected: bool = false
 var _inventory_injected: bool = false
 
+# Ctrl+LMB drag-select
+var _drag_selecting: bool = false
+var _drag_selected: Array = []
+var _drag_source_grid = null
+var _inv_drag_overlay: Control = null
+var _con_drag_overlay: Control = null
+
 # MCM
 var _mcm_helpers = null
 const MCM_FILE_PATH = "user://MCM/QuickStackSort"
@@ -48,6 +55,7 @@ func _process(_delta):
 			_interface = null
 			_container_injected = false
 			_inventory_injected = false
+			_cleanup_drag_overlays()
 		var core_ui = scene.get_node_or_null("Core/UI")
 		if core_ui:
 			for child in core_ui.get_children():
@@ -88,7 +96,14 @@ func _process(_delta):
 		if store_all:
 			store_all.visible = container_open
 
-	# (hotkey handled in _input)
+	# Drag overlay management
+	_update_drag_overlays()
+
+	# Active drag-select tracking
+	if _drag_selecting:
+		_try_select_item_at_mouse()
+		if not Input.is_key_pressed(KEY_CTRL) or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			_finish_drag_select()
 
 # ─── UI Injection ───
 
@@ -211,6 +226,134 @@ func _hotkey_sort():
 		_on_sort_inventory()
 	elif hover_grid == con_grid:
 		_on_sort_container()
+
+# ─── Ctrl+LMB Drag Select ───
+
+func _create_drag_overlay(grid) -> Control:
+	var overlay = Control.new()
+	overlay.name = "QS_DragOverlay"
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_PASS
+	overlay.gui_input.connect(_on_drag_overlay_input.bind(grid))
+	grid.add_child(overlay)
+	return overlay
+
+func _update_drag_overlays():
+	var inv_grid = _interface.inventoryGrid if _interface else null
+	var con_grid = _interface.containerGrid if _interface else null
+	var ctrl_held = Input.is_key_pressed(KEY_CTRL)
+
+	if inv_grid and is_instance_valid(inv_grid):
+		if _inv_drag_overlay == null or not is_instance_valid(_inv_drag_overlay):
+			_inv_drag_overlay = _create_drag_overlay(inv_grid)
+		if ctrl_held:
+			_inv_drag_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+			_inv_drag_overlay.move_to_front()
+		else:
+			_inv_drag_overlay.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	if con_grid and is_instance_valid(con_grid):
+		if _con_drag_overlay == null or not is_instance_valid(_con_drag_overlay):
+			_con_drag_overlay = _create_drag_overlay(con_grid)
+		if ctrl_held:
+			_con_drag_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+			_con_drag_overlay.move_to_front()
+		else:
+			_con_drag_overlay.mouse_filter = Control.MOUSE_FILTER_PASS
+
+func _on_drag_overlay_input(event: InputEvent, grid):
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_start_drag_select(grid)
+		elif _drag_selecting:
+			_finish_drag_select()
+
+func _start_drag_select(grid):
+	_drag_selecting = true
+	_drag_selected = []
+	_drag_source_grid = grid
+	_try_select_item_at_mouse()
+
+func _try_select_item_at_mouse():
+	if _drag_source_grid == null:
+		return
+	var mouse_pos = _drag_source_grid.get_local_mouse_position()
+	for child in _drag_source_grid.get_children():
+		if child is Item and child not in _drag_selected:
+			var rect = Rect2(child.position, child.size)
+			if rect.has_point(mouse_pos):
+				_drag_selected.append(child)
+				child.modulate = Color(0.6, 1.0, 0.6, 0.9)
+				break
+
+func _finish_drag_select():
+	_drag_selecting = false
+
+	for item in _drag_selected:
+		if is_instance_valid(item):
+			item.modulate = Color(1, 1, 1, 1)
+
+	if _drag_selected.is_empty():
+		_drag_source_grid = null
+		return
+
+	var inv_grid = _interface.inventoryGrid
+	var con_grid = _interface.containerGrid
+	var target_grid = null
+
+	if _interface.container != null:
+		if _drag_source_grid == inv_grid:
+			target_grid = con_grid
+		elif _drag_source_grid == con_grid:
+			target_grid = inv_grid
+
+	if target_grid == null:
+		_play_error()
+		_drag_selected = []
+		_drag_source_grid = null
+		return
+
+	var transferred: int = 0
+	var failed: int = 0
+	for item in _drag_selected:
+		if not is_instance_valid(item):
+			continue
+		if _interface.AutoStack(item.slotData, target_grid):
+			_drag_source_grid.Pick(item)
+			item.queue_free()
+			transferred += 1
+		elif _interface.AutoPlace(item, target_grid, _drag_source_grid, false):
+			transferred += 1
+		else:
+			failed += 1
+
+	if transferred > 0:
+		_play_click()
+		_update_ui()
+		if failed > 0:
+			_flash_result("Moved %d, %d didn't fit" % [transferred, failed])
+		else:
+			_flash_result("Moved %d items" % transferred)
+	else:
+		_play_error()
+
+	_drag_selected = []
+	_drag_source_grid = null
+
+func _cleanup_drag_overlays():
+	_cancel_drag_select()
+	_remove_node(_inv_drag_overlay)
+	_remove_node(_con_drag_overlay)
+	_inv_drag_overlay = null
+	_con_drag_overlay = null
+
+func _cancel_drag_select():
+	for item in _drag_selected:
+		if is_instance_valid(item):
+			item.modulate = Color(1, 1, 1, 1)
+	_drag_selected = []
+	_drag_selecting = false
+	_drag_source_grid = null
 
 # ─── Quick Stack (Transfer) Logic ───
 
