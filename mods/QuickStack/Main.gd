@@ -20,6 +20,7 @@ var _inventory_injected: bool = false
 var _drag_selecting: bool = false
 var _drag_selected: Array = []
 var _drag_source_grid = null
+var _drag_markers: Array = []
 
 # MCM
 var _mcm_helpers = null
@@ -253,15 +254,34 @@ func _try_select_item_at_mouse():
 			var rect = Rect2(child.position, child.size)
 			if rect.has_point(mouse_pos):
 				_drag_selected.append(child)
-				child.modulate = Color(0.3, 1.0, 0.3, 1.0)
+				_add_selection_marker(child)
 				break
+
+func _add_selection_marker(item: Item):
+	var marker = ColorRect.new()
+	marker.name = "QS_Marker"
+	marker.color = Color(0.2, 0.9, 0.2, 0.35)
+	marker.position = item.position
+	marker.size = item.size
+	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Add marker to the parent UI panel (Container/Inventory), not the grid
+	var panel = _drag_source_grid.get_parent()
+	if panel:
+		# Convert grid-local position to panel-local position
+		marker.position = _drag_source_grid.position + item.position
+		panel.add_child(marker)
+		marker.z_index = 10
+	_drag_markers.append(marker)
+
+func _clear_markers():
+	for marker in _drag_markers:
+		if is_instance_valid(marker):
+			marker.queue_free()
+	_drag_markers = []
 
 func _finish_drag_select():
 	_drag_selecting = false
-
-	for item in _drag_selected:
-		if is_instance_valid(item):
-			item.modulate = Color(1, 1, 1, 1)
+	_clear_markers()
 
 	if _drag_selected.is_empty():
 		_drag_source_grid = null
@@ -311,9 +331,7 @@ func _finish_drag_select():
 	_drag_source_grid = null
 
 func _cancel_drag_select():
-	for item in _drag_selected:
-		if is_instance_valid(item):
-			item.modulate = Color(1, 1, 1, 1)
+	_clear_markers()
 	_drag_selected = []
 	_drag_selecting = false
 	_drag_source_grid = null
