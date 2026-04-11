@@ -1,5 +1,11 @@
 # Changelog
 
+### v2.3.0
+- Added item locking — locked items are skipped by Sort, Transfer, Store All, Take All, and drag-select
+- Lock toggle via middle-click (default) or configurable keyboard/mouse button in MCM
+- Locked items show a red tint and border overlay
+- Locks reset on scene change
+
 ### v2.2.0
 - Added 6 configurable sort modes via MCM: Alphabetical, Type, Weight, Value, Size, Rarity
 - Default sort is now Alphabetical (groups identical items together)
