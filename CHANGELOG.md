@@ -1,5 +1,10 @@
 # Changelog
 
+### v2.3.2
+- Fixed locking one item incorrectly locking all items of the same type
+- Locks now per-instance using item type + grid position as key
+- Lock positions auto-update when items are manually dragged
+
 ### v2.3.1
 - Fixed item locks not persisting across map transitions and hideout exits
 - Locks now keyed by item type instead of runtime instance — survives scene changes and game restarts
