@@ -43,6 +43,14 @@ var cfg_mouse_btn: int = MOUSE_BUTTON_XBUTTON1  # Mouse 4
 const MOUSE_BTN_OPTIONS = ["Mouse 4 (Back)", "Mouse 5 (Forward)", "Middle Click"]
 const MOUSE_BTN_VALUES = [MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2, MOUSE_BUTTON_MIDDLE]
 
+# Lock hotkey config
+var cfg_lock_input_type: int = 1  # 0 = Keyboard, 1 = Mouse Button
+var cfg_lock_key: int = KEY_L
+var cfg_lock_mouse_btn: int = MOUSE_BUTTON_MIDDLE
+
+const LOCK_MOUSE_OPTIONS = ["Middle Click", "Mouse 4 (Back)", "Mouse 5 (Forward)"]
+const LOCK_MOUSE_VALUES = [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2]
+
 const SORT_MODE_OPTIONS = ["Alphabetical", "Type", "Weight", "Value", "Size", "Rarity"]
 var cfg_sort_mode: int = 0  # Index into SORT_MODE_OPTIONS
 
@@ -233,15 +241,26 @@ func _make_button(text: String, callback: Callable) -> Button:
 func _input(event):
 	if _interface == null:
 		return
-	# Middle-click to toggle item lock
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE:
-		var hover_grid = _interface.GetHoverGrid()
-		if hover_grid != null:
-			var item = _get_item_at_mouse(hover_grid)
-			if item != null:
-				_toggle_lock(item)
-				get_viewport().set_input_as_handled()
-				return
+	# Lock toggle
+	if cfg_lock_input_type == 0:
+		if event is InputEventKey and event.pressed and not event.echo:
+			if event.keycode == cfg_lock_key:
+				var hover_grid = _interface.GetHoverGrid()
+				if hover_grid != null:
+					var item = _get_item_at_mouse(hover_grid)
+					if item != null:
+						_toggle_lock(item)
+						get_viewport().set_input_as_handled()
+						return
+	else:
+		if event is InputEventMouseButton and event.pressed and event.button_index == cfg_lock_mouse_btn:
+			var hover_grid = _interface.GetHoverGrid()
+			if hover_grid != null:
+				var item = _get_item_at_mouse(hover_grid)
+				if item != null:
+					_toggle_lock(item)
+					get_viewport().set_input_as_handled()
+					return
 	if cfg_input_type == 0:
 		# Keyboard mode
 		if event is InputEventKey and event.pressed and not event.echo:
@@ -788,6 +807,32 @@ func _register_mcm():
 		"menu_pos" = 4
 	})
 
+	_config.set_value("Dropdown", "cfg_lock_input_type", {
+		"name" = "Lock Hotkey Type",
+		"tooltip" = "Use a keyboard key or mouse button to lock/unlock items",
+		"default" = 1,
+		"value" = 1,
+		"options" = ["Keyboard Key", "Mouse Button"],
+		"menu_pos" = 5
+	})
+
+	_config.set_value("Keycode", "cfg_lock_key", {
+		"name" = "Lock Key (Keyboard)",
+		"tooltip" = "Keyboard key to toggle lock on hovered item",
+		"default" = KEY_L,
+		"value" = KEY_L,
+		"menu_pos" = 6
+	})
+
+	_config.set_value("Dropdown", "cfg_lock_mouse_btn", {
+		"name" = "Lock Button (Mouse)",
+		"tooltip" = "Mouse button to toggle lock on hovered item",
+		"default" = 0,
+		"value" = 0,
+		"options" = LOCK_MOUSE_OPTIONS,
+		"menu_pos" = 7
+	})
+
 	if not FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
 		DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
 		_config.save(MCM_FILE_PATH + "/config.ini")
@@ -820,5 +865,9 @@ func _apply_mcm_config(config: ConfigFile):
 	cfg_sort_key = _mcm_val(config, "Keycode", "cfg_sort_key", cfg_sort_key)
 	var mouse_idx = _mcm_val(config, "Dropdown", "cfg_mouse_btn", 0)
 	cfg_mouse_btn = MOUSE_BTN_VALUES[clampi(mouse_idx, 0, MOUSE_BTN_VALUES.size() - 1)]
+	cfg_lock_input_type = _mcm_val(config, "Dropdown", "cfg_lock_input_type", cfg_lock_input_type)
+	cfg_lock_key = _mcm_val(config, "Keycode", "cfg_lock_key", cfg_lock_key)
+	var lock_mouse_idx = _mcm_val(config, "Dropdown", "cfg_lock_mouse_btn", 0)
+	cfg_lock_mouse_btn = LOCK_MOUSE_VALUES[clampi(lock_mouse_idx, 0, LOCK_MOUSE_VALUES.size() - 1)]
 	if cfg_input_type == 0:
 		_register_hotkey(cfg_sort_key)
