@@ -39,6 +39,9 @@ var cfg_mouse_btn: int = MOUSE_BUTTON_XBUTTON1  # Mouse 4
 const MOUSE_BTN_OPTIONS = ["Mouse 4 (Back)", "Mouse 5 (Forward)", "Middle Click"]
 const MOUSE_BTN_VALUES = [MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2, MOUSE_BUTTON_MIDDLE]
 
+const SORT_MODE_OPTIONS = ["Alphabetical", "Type", "Weight", "Value", "Size", "Rarity"]
+var cfg_sort_mode: int = 0  # Index into SORT_MODE_OPTIONS
+
 # ─── Initialization ───
 
 func _ready():
@@ -480,16 +483,8 @@ func _sort_grid(grid):
 	# Auto-stack: merge stackable items before placing
 	var merged: Array = _merge_stacks(items_data)
 
-	# Sort: alphabetical by name, then largest area as tiebreaker
-	merged.sort_custom(func(a, b):
-		var name_a = a.itemData.name.to_lower()
-		var name_b = b.itemData.name.to_lower()
-		if name_a != name_b:
-			return name_a < name_b
-		var area_a = a.itemData.size.x * a.itemData.size.y
-		var area_b = b.itemData.size.x * b.itemData.size.y
-		return area_a > area_b
-	)
+	# Sort items based on MCM sort mode
+	merged.sort_custom(_compare_items)
 
 	# Re-create items in sorted order
 	var placed: int = 0
@@ -506,6 +501,32 @@ func _sort_grid(grid):
 		_flash_result("Sorted %d, dropped %d" % [placed, dropped])
 	else:
 		_flash_result("Sorted %d items" % placed)
+
+func _compare_items(a, b) -> bool:
+	match cfg_sort_mode:
+		0:  # Alphabetical
+			var na = a.itemData.name.to_lower()
+			var nb = b.itemData.name.to_lower()
+			if na != nb: return na < nb
+		1:  # Type
+			var ta = a.itemData.type.to_lower()
+			var tb = b.itemData.type.to_lower()
+			if ta != tb: return ta < tb
+		2:  # Weight (heaviest first)
+			if a.itemData.weight != b.itemData.weight:
+				return a.itemData.weight > b.itemData.weight
+		3:  # Value (most valuable first)
+			if a.itemData.value != b.itemData.value:
+				return a.itemData.value > b.itemData.value
+		4:  # Size (largest area first)
+			var area_a = a.itemData.size.x * a.itemData.size.y
+			var area_b = b.itemData.size.x * b.itemData.size.y
+			if area_a != area_b: return area_a > area_b
+		5:  # Rarity (legendary first)
+			if a.itemData.rarity != b.itemData.rarity:
+				return a.itemData.rarity > b.itemData.rarity
+	# Tiebreaker: alphabetical by name
+	return a.itemData.name.to_lower() < b.itemData.name.to_lower()
 
 func _merge_stacks(items: Array) -> Array:
 	# Group stackable items by file, merge amounts
@@ -636,13 +657,22 @@ func _try_load_mcm():
 func _register_mcm():
 	var _config = ConfigFile.new()
 
+	_config.set_value("Dropdown", "cfg_sort_mode", {
+		"name" = "Sort Mode",
+		"tooltip" = "How items are ordered when sorting",
+		"default" = 0,
+		"value" = 0,
+		"options" = SORT_MODE_OPTIONS,
+		"menu_pos" = 1
+	})
+
 	_config.set_value("Dropdown", "cfg_input_type", {
 		"name" = "Sort Hotkey Type",
 		"tooltip" = "Use a keyboard key or mouse button for sorting",
 		"default" = 0,
 		"value" = 0,
 		"options" = ["Keyboard Key", "Mouse Button"],
-		"menu_pos" = 1
+		"menu_pos" = 2
 	})
 
 	_config.set_value("Keycode", "cfg_sort_key", {
@@ -650,7 +680,7 @@ func _register_mcm():
 		"tooltip" = "Keyboard key to sort the hovered grid",
 		"default" = KEY_Z,
 		"value" = KEY_Z,
-		"menu_pos" = 2
+		"menu_pos" = 3
 	})
 
 	_config.set_value("Dropdown", "cfg_mouse_btn", {
@@ -659,7 +689,7 @@ func _register_mcm():
 		"default" = 0,
 		"value" = 0,
 		"options" = MOUSE_BTN_OPTIONS,
-		"menu_pos" = 3
+		"menu_pos" = 4
 	})
 
 	if not FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
@@ -689,6 +719,7 @@ func _mcm_val(config: ConfigFile, section: String, key: String, fallback):
 	return entry.get("value", fallback)
 
 func _apply_mcm_config(config: ConfigFile):
+	cfg_sort_mode = _mcm_val(config, "Dropdown", "cfg_sort_mode", cfg_sort_mode)
 	cfg_input_type = _mcm_val(config, "Dropdown", "cfg_input_type", cfg_input_type)
 	cfg_sort_key = _mcm_val(config, "Keycode", "cfg_sort_key", cfg_sort_key)
 	var mouse_idx = _mcm_val(config, "Dropdown", "cfg_mouse_btn", 0)
