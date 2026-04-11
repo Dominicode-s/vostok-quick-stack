@@ -1,5 +1,11 @@
 # Changelog
 
+### v2.4.0
+- Simplified hotkey settings using MCM v2.4.0 native mouse button support on Keycode inputs
+- Sort and Lock hotkeys are now single Keycode entries — bind any key or mouse button directly
+- Removed 4 redundant dropdown settings (input type selectors, mouse button pickers)
+- Requires MCM v2.4.0+
+
 ### v2.3.2
 - Fixed locking one item incorrectly locking all items of the same type
 - Locks now per-instance using item type + grid position as key
