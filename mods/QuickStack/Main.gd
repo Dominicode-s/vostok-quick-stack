@@ -27,9 +27,9 @@ var _drag_start_pos: Vector2 = Vector2.ZERO
 var _drag_pending_grid = null
 const DRAG_THRESHOLD: float = 8.0
 
-# Item locking
-var _locked_items: Dictionary = {}  # item instance_id → true
-var _lock_overlays: Dictionary = {}  # item instance_id → ColorRect
+# Item locking (keyed by slotData.get_instance_id() so locks survive scene transitions)
+var _locked_items: Dictionary = {}  # slotData instance_id → true
+var _lock_overlays: Dictionary = {}  # slotData instance_id → ColorRect overlay
 
 # MCM
 var _mcm_helpers = null
@@ -75,7 +75,8 @@ func _process(_delta):
 			_container_injected = false
 			_inventory_injected = false
 			_cancel_drag_select()
-			_locked_items.clear()
+			# Keep _locked_items (keyed by slotData id, persists across scenes)
+			# Clear overlays — Item nodes are destroyed on scene change
 			_lock_overlays.clear()
 		var core_ui = scene.get_node_or_null("Core/UI")
 		if core_ui:
@@ -142,8 +143,9 @@ func _process(_delta):
 		_drag_pending_grid = null
 	_prev_ctrl_lmb = ctrl_lmb
 
-	# Periodically clean up locks for freed items
+	# Re-apply lock overlays after scene transitions & clean up stale locks
 	if not _locked_items.is_empty():
+		_reapply_lock_overlays()
 		_cleanup_stale_locks()
 
 # ─── UI Injection ───
@@ -397,22 +399,28 @@ func _cancel_drag_select():
 # ─── Item Locking ───
 
 func _is_locked(item: Item) -> bool:
-	return _locked_items.has(item.get_instance_id())
+	if item.slotData == null:
+		return false
+	return _locked_items.has(item.slotData.get_instance_id())
 
 func _toggle_lock(item: Item):
-	var id = item.get_instance_id()
-	if _locked_items.has(id):
-		_locked_items.erase(id)
-		_remove_lock_overlay(id)
+	if item.slotData == null:
+		return
+	var sd_id = item.slotData.get_instance_id()
+	if _locked_items.has(sd_id):
+		_locked_items.erase(sd_id)
+		_remove_lock_overlay(sd_id)
 		_play_click()
 	else:
-		_locked_items[id] = true
+		_locked_items[sd_id] = true
 		_add_lock_overlay(item)
 		_play_click()
 
 func _add_lock_overlay(item: Item):
-	var id = item.get_instance_id()
-	if _lock_overlays.has(id) and is_instance_valid(_lock_overlays[id]):
+	if item.slotData == null:
+		return
+	var sd_id = item.slotData.get_instance_id()
+	if _lock_overlays.has(sd_id) and is_instance_valid(_lock_overlays[sd_id]):
 		return
 	var overlay = ColorRect.new()
 	overlay.name = "QS_Lock"
@@ -431,11 +439,11 @@ func _add_lock_overlay(item: Item):
 	border.size = item.size
 	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	item.add_child(border)
-	_lock_overlays[id] = overlay
+	_lock_overlays[sd_id] = overlay
 
-func _remove_lock_overlay(id: int):
-	if _lock_overlays.has(id):
-		var overlay = _lock_overlays[id]
+func _remove_lock_overlay(sd_id: int):
+	if _lock_overlays.has(sd_id):
+		var overlay = _lock_overlays[sd_id]
 		if is_instance_valid(overlay):
 			# Also remove the border sibling
 			var item = overlay.get_parent()
@@ -444,16 +452,30 @@ func _remove_lock_overlay(id: int):
 				if border:
 					border.queue_free()
 			overlay.queue_free()
-		_lock_overlays.erase(id)
+		_lock_overlays.erase(sd_id)
+
+func _reapply_lock_overlays():
+	if _interface == null:
+		return
+	var inv_grid = _interface.get("inventoryGrid")
+	if inv_grid == null:
+		return
+	for child in inv_grid.get_children():
+		if child is Item and child.slotData != null:
+			var sd_id = child.slotData.get_instance_id()
+			if _locked_items.has(sd_id):
+				if not _lock_overlays.has(sd_id) or not is_instance_valid(_lock_overlays[sd_id]):
+					_add_lock_overlay(child)
 
 func _cleanup_stale_locks():
 	var stale: Array = []
-	for id in _locked_items:
-		if not _lock_overlays.has(id) or not is_instance_valid(_lock_overlays[id]):
-			stale.append(id)
-	for id in stale:
-		_locked_items.erase(id)
-		_lock_overlays.erase(id)
+	for sd_id in _locked_items:
+		if _lock_overlays.has(sd_id):
+			if not is_instance_valid(_lock_overlays[sd_id]):
+				stale.append(sd_id)
+	for sd_id in stale:
+		_locked_items.erase(sd_id)
+		_lock_overlays.erase(sd_id)
 
 func _get_item_at_mouse(grid) -> Item:
 	if grid == null:
