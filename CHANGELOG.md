@@ -1,5 +1,11 @@
 # Changelog
 
+### v2.1.2
+- Fixed null crash during drag-select when grid is destroyed mid-operation
+- Added safety check after AutoStack to prevent operating on freed items
+- Fixed MCM config crash when config keys are missing or corrupted
+- Added bounds check on mouse button config index
+
 ### v2.1.1
 - Fixed Ctrl+click triggering multi-select on single items — now requires a small drag before activating
 - Single Ctrl+clicks pass through to the game normally
