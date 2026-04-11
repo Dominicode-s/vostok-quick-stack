@@ -1,7 +1,7 @@
 [mod]
 name="Quick Stack & Sort"
 id="quick-stack-sort"
-version="2.3.2"
+version="2.4.0"
 [autoload]
 QuickStackMain="res://mods/QuickStack/Main.gd"
 [updates]

@@ -38,19 +38,11 @@ const MCM_FILE_PATH = "user://MCM/QuickStackSort"
 const MCM_MOD_ID = "QuickStackSort"
 const SORT_ACTION = "quick_sort"
 var cfg_sort_key: int = KEY_Z
-var cfg_input_type: int = 0  # 0 = Keyboard, 1 = Mouse Button
-var cfg_mouse_btn: int = MOUSE_BUTTON_XBUTTON1  # Mouse 4
-
-const MOUSE_BTN_OPTIONS = ["Mouse 4 (Back)", "Mouse 5 (Forward)", "Middle Click"]
-const MOUSE_BTN_VALUES = [MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2, MOUSE_BUTTON_MIDDLE]
+var cfg_sort_key_type: String = "Key"
 
 # Lock hotkey config
-var cfg_lock_input_type: int = 1  # 0 = Keyboard, 1 = Mouse Button
-var cfg_lock_key: int = KEY_L
-var cfg_lock_mouse_btn: int = MOUSE_BUTTON_MIDDLE
-
-const LOCK_MOUSE_OPTIONS = ["Middle Click", "Mouse 4 (Back)", "Mouse 5 (Forward)"]
-const LOCK_MOUSE_VALUES = [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2]
+var cfg_lock_key: int = MOUSE_BUTTON_MIDDLE
+var cfg_lock_key_type: String = "Mouse"
 
 const SORT_MODE_OPTIONS = ["Alphabetical", "Type", "Weight", "Value", "Size", "Rarity"]
 var cfg_sort_mode: int = 0  # Index into SORT_MODE_OPTIONS
@@ -62,7 +54,7 @@ func _ready():
 	_mcm_helpers = _try_load_mcm()
 	if _mcm_helpers:
 		_register_mcm()
-	_register_hotkey(cfg_sort_key)
+	_register_hotkey(cfg_sort_key, cfg_sort_key_type)
 	_load_locks()
 
 func _process(_delta):
@@ -247,35 +239,23 @@ func _input(event):
 	if _interface == null:
 		return
 	# Lock toggle
-	if cfg_lock_input_type == 0:
-		if event is InputEventKey and event.pressed and not event.echo:
-			if event.keycode == cfg_lock_key:
-				var hover_grid = _interface.GetHoverGrid()
-				if hover_grid != null:
-					var item = _get_item_at_mouse(hover_grid)
-					if item != null:
-						_toggle_lock(item)
-						get_viewport().set_input_as_handled()
-						return
+	if _matches_input(event, cfg_lock_key, cfg_lock_key_type):
+		var hover_grid = _interface.GetHoverGrid()
+		if hover_grid != null:
+			var item = _get_item_at_mouse(hover_grid)
+			if item != null:
+				_toggle_lock(item)
+				get_viewport().set_input_as_handled()
+				return
+	# Sort hotkey
+	if _matches_input(event, cfg_sort_key, cfg_sort_key_type):
+		_hotkey_sort()
+
+func _matches_input(event: InputEvent, key_value: int, key_type: String) -> bool:
+	if key_type == "Mouse":
+		return event is InputEventMouseButton and event.pressed and event.button_index == key_value
 	else:
-		if event is InputEventMouseButton and event.pressed and event.button_index == cfg_lock_mouse_btn:
-			var hover_grid = _interface.GetHoverGrid()
-			if hover_grid != null:
-				var item = _get_item_at_mouse(hover_grid)
-				if item != null:
-					_toggle_lock(item)
-					get_viewport().set_input_as_handled()
-					return
-	if cfg_input_type == 0:
-		# Keyboard mode
-		if event is InputEventKey and event.pressed and not event.echo:
-			if event.keycode == cfg_sort_key:
-				_hotkey_sort()
-	else:
-		# Mouse button mode
-		if event is InputEventMouseButton and event.pressed:
-			if event.button_index == cfg_mouse_btn:
-				_hotkey_sort()
+		return event is InputEventKey and event.pressed and not event.echo and event.keycode == key_value
 
 # ─── Hotkey Sort ───
 
@@ -820,14 +800,19 @@ func _flash_result(text: String):
 
 # ─── Hotkey Registration ───
 
-func _register_hotkey(key_code: int):
+func _register_hotkey(key_value: int, key_type: String):
 	if not InputMap.has_action(SORT_ACTION):
 		InputMap.add_action(SORT_ACTION)
 	else:
 		InputMap.action_erase_events(SORT_ACTION)
-	var ev = InputEventKey.new()
-	ev.keycode = key_code
-	InputMap.action_add_event(SORT_ACTION, ev)
+	if key_type == "Mouse":
+		var ev = InputEventMouseButton.new()
+		ev.button_index = key_value
+		InputMap.action_add_event(SORT_ACTION, ev)
+	else:
+		var ev = InputEventKey.new()
+		ev.keycode = key_value
+		InputMap.action_add_event(SORT_ACTION, ev)
 
 # ─── MCM Integration ───
 
@@ -848,57 +833,34 @@ func _register_mcm():
 		"menu_pos" = 1
 	})
 
-	_config.set_value("Dropdown", "cfg_input_type", {
-		"name" = "Sort Hotkey Type",
-		"tooltip" = "Use a keyboard key or mouse button for sorting",
-		"default" = 0,
-		"value" = 0,
-		"options" = ["Keyboard Key", "Mouse Button"],
+	_config.set_value("Keycode", "cfg_sort_key", {
+		"name" = "Sort Hotkey",
+		"tooltip" = "Key or mouse button to sort the hovered grid",
+		"default" = KEY_Z, "default_type" = "Key",
+		"value" = KEY_Z, "type" = "Key",
 		"menu_pos" = 2
 	})
 
-	_config.set_value("Keycode", "cfg_sort_key", {
-		"name" = "Sort Key (Keyboard)",
-		"tooltip" = "Keyboard key to sort the hovered grid",
-		"default" = KEY_Z,
-		"value" = KEY_Z,
+	_config.set_value("Keycode", "cfg_lock_key", {
+		"name" = "Lock Hotkey",
+		"tooltip" = "Key or mouse button to toggle lock on hovered item",
+		"default" = MOUSE_BUTTON_MIDDLE, "default_type" = "Mouse",
+		"value" = MOUSE_BUTTON_MIDDLE, "type" = "Mouse",
 		"menu_pos" = 3
 	})
 
-	_config.set_value("Dropdown", "cfg_mouse_btn", {
-		"name" = "Sort Button (Mouse)",
-		"tooltip" = "Mouse button to sort the hovered grid",
-		"default" = 0,
-		"value" = 0,
-		"options" = MOUSE_BTN_OPTIONS,
-		"menu_pos" = 4
-	})
-
-	_config.set_value("Dropdown", "cfg_lock_input_type", {
-		"name" = "Lock Hotkey Type",
-		"tooltip" = "Use a keyboard key or mouse button to lock/unlock items",
-		"default" = 1,
-		"value" = 1,
-		"options" = ["Keyboard Key", "Mouse Button"],
-		"menu_pos" = 5
-	})
-
-	_config.set_value("Keycode", "cfg_lock_key", {
-		"name" = "Lock Key (Keyboard)",
-		"tooltip" = "Keyboard key to toggle lock on hovered item",
-		"default" = KEY_L,
-		"value" = KEY_L,
-		"menu_pos" = 6
-	})
-
-	_config.set_value("Dropdown", "cfg_lock_mouse_btn", {
-		"name" = "Lock Button (Mouse)",
-		"tooltip" = "Mouse button to toggle lock on hovered item",
-		"default" = 0,
-		"value" = 0,
-		"options" = LOCK_MOUSE_OPTIONS,
-		"menu_pos" = 7
-	})
+	# Migration: remove old dropdown entries from saved config
+	var _saved = ConfigFile.new()
+	if FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
+		_saved.load(MCM_FILE_PATH + "/config.ini")
+		var stale_keys = ["cfg_input_type", "cfg_mouse_btn", "cfg_lock_input_type", "cfg_lock_mouse_btn"]
+		var changed = false
+		for key in stale_keys:
+			if _saved.has_section_key("Dropdown", key):
+				_saved.erase_section_key("Dropdown", key)
+				changed = true
+		if changed:
+			_saved.save(MCM_FILE_PATH + "/config.ini")
 
 	if not FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
 		DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
@@ -926,15 +888,18 @@ func _mcm_val(config: ConfigFile, section: String, key: String, fallback):
 		return fallback
 	return entry.get("value", fallback)
 
+func _mcm_keycode(config: ConfigFile, key: String, fallback_value: int, fallback_type: String) -> Array:
+	var entry = config.get_value("Keycode", key, null)
+	if entry == null or not entry is Dictionary:
+		return [fallback_value, fallback_type]
+	return [entry.get("value", fallback_value), entry.get("type", fallback_type)]
+
 func _apply_mcm_config(config: ConfigFile):
 	cfg_sort_mode = _mcm_val(config, "Dropdown", "cfg_sort_mode", cfg_sort_mode)
-	cfg_input_type = _mcm_val(config, "Dropdown", "cfg_input_type", cfg_input_type)
-	cfg_sort_key = _mcm_val(config, "Keycode", "cfg_sort_key", cfg_sort_key)
-	var mouse_idx = _mcm_val(config, "Dropdown", "cfg_mouse_btn", 0)
-	cfg_mouse_btn = MOUSE_BTN_VALUES[clampi(mouse_idx, 0, MOUSE_BTN_VALUES.size() - 1)]
-	cfg_lock_input_type = _mcm_val(config, "Dropdown", "cfg_lock_input_type", cfg_lock_input_type)
-	cfg_lock_key = _mcm_val(config, "Keycode", "cfg_lock_key", cfg_lock_key)
-	var lock_mouse_idx = _mcm_val(config, "Dropdown", "cfg_lock_mouse_btn", 0)
-	cfg_lock_mouse_btn = LOCK_MOUSE_VALUES[clampi(lock_mouse_idx, 0, LOCK_MOUSE_VALUES.size() - 1)]
-	if cfg_input_type == 0:
-		_register_hotkey(cfg_sort_key)
+	var sort_arr = _mcm_keycode(config, "cfg_sort_key", cfg_sort_key, cfg_sort_key_type)
+	cfg_sort_key = sort_arr[0]
+	cfg_sort_key_type = sort_arr[1]
+	var lock_arr = _mcm_keycode(config, "cfg_lock_key", cfg_lock_key, cfg_lock_key_type)
+	cfg_lock_key = lock_arr[0]
+	cfg_lock_key_type = lock_arr[1]
+	_register_hotkey(cfg_sort_key, cfg_sort_key_type)
