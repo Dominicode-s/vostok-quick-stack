@@ -109,10 +109,13 @@ func _process(_delta):
 			_drag_start_pos = _drag_source_grid.get_local_mouse_position() if _drag_source_grid else hover_grid.get_local_mouse_position()
 			_drag_pending_grid = hover_grid
 	elif ctrl_lmb and _drag_pending and not _drag_selecting:
-		var current_pos = _drag_pending_grid.get_local_mouse_position()
-		if current_pos.distance_to(_drag_start_pos) >= DRAG_THRESHOLD:
+		if _drag_pending_grid == null:
 			_drag_pending = false
-			_start_drag_select(_drag_pending_grid)
+		else:
+			var current_pos = _drag_pending_grid.get_local_mouse_position()
+			if current_pos.distance_to(_drag_start_pos) >= DRAG_THRESHOLD:
+				_drag_pending = false
+				_start_drag_select(_drag_pending_grid)
 	elif ctrl_lmb and _drag_selecting:
 		_try_select_item_at_mouse()
 	elif not ctrl_lmb and _drag_selecting:
@@ -319,8 +322,9 @@ func _finish_drag_select():
 		if item.get_parent() != _drag_source_grid:
 			continue
 		if _interface.AutoStack(item.slotData, target_grid):
-			_drag_source_grid.Pick(item)
-			item.queue_free()
+			if is_instance_valid(item) and item.get_parent() == _drag_source_grid:
+				_drag_source_grid.Pick(item)
+				item.queue_free()
 			transferred += 1
 		elif _interface.AutoPlace(item, target_grid, _drag_source_grid, false):
 			transferred += 1
@@ -678,10 +682,16 @@ func _register_mcm():
 func _on_mcm_save(config: ConfigFile):
 	_apply_mcm_config(config)
 
+func _mcm_val(config: ConfigFile, section: String, key: String, fallback):
+	var entry = config.get_value(section, key, null)
+	if entry == null or not entry is Dictionary:
+		return fallback
+	return entry.get("value", fallback)
+
 func _apply_mcm_config(config: ConfigFile):
-	cfg_input_type = config.get_value("Dropdown", "cfg_input_type")["value"]
-	cfg_sort_key = config.get_value("Keycode", "cfg_sort_key")["value"]
-	var mouse_idx = config.get_value("Dropdown", "cfg_mouse_btn")["value"]
-	cfg_mouse_btn = MOUSE_BTN_VALUES[mouse_idx]
+	cfg_input_type = _mcm_val(config, "Dropdown", "cfg_input_type", cfg_input_type)
+	cfg_sort_key = _mcm_val(config, "Keycode", "cfg_sort_key", cfg_sort_key)
+	var mouse_idx = _mcm_val(config, "Dropdown", "cfg_mouse_btn", 0)
+	cfg_mouse_btn = MOUSE_BTN_VALUES[clampi(mouse_idx, 0, MOUSE_BTN_VALUES.size() - 1)]
 	if cfg_input_type == 0:
 		_register_hotkey(cfg_sort_key)
