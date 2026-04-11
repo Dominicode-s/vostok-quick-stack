@@ -27,9 +27,9 @@ var _drag_start_pos: Vector2 = Vector2.ZERO
 var _drag_pending_grid = null
 const DRAG_THRESHOLD: float = 8.0
 
-# Item locking (keyed by itemData.file so locks survive scene transitions and game restarts)
-var _locked_items: Dictionary = {}  # itemData.file → true
-var _lock_overlays: Dictionary = {}  # item instance_id → ColorRect (for overlay cleanup)
+# Item locking (keyed by "itemData.file|gridX,gridY" for per-instance persistence)
+var _locked_items: Dictionary = {}  # "file|x,y" → true
+var _lock_overlays: Dictionary = {}  # item instance_id → ColorRect
 const LOCKS_SAVE_PATH = "user://QuickStackSort_locks.cfg"
 
 # MCM
@@ -145,9 +145,10 @@ func _process(_delta):
 		_drag_pending_grid = null
 	_prev_ctrl_lmb = ctrl_lmb
 
-	# Re-apply lock overlays after scene transitions & clean up stale locks
+	# Re-apply lock overlays after scene transitions & track position changes
 	if not _locked_items.is_empty():
 		_reapply_lock_overlays()
+		_update_lock_positions()
 		_cleanup_stale_locks()
 
 # ─── UI Injection ───
@@ -400,24 +401,25 @@ func _cancel_drag_select():
 
 # ─── Item Locking ───
 
+func _lock_key(item: Item) -> String:
+	return item.slotData.itemData.file + "|" + str(int(item.position.x)) + "," + str(int(item.position.y))
+
 func _is_locked(item: Item) -> bool:
 	if item.slotData == null or item.slotData.itemData == null:
 		return false
-	return _locked_items.has(item.slotData.itemData.file)
+	return _locked_items.has(_lock_key(item))
 
 func _toggle_lock(item: Item):
 	if item.slotData == null or item.slotData.itemData == null:
 		return
-	var file_key = item.slotData.itemData.file
-	if _locked_items.has(file_key):
-		_locked_items.erase(file_key)
-		# Remove overlays from ALL items of this type in visible grids
-		_remove_overlays_for_file(file_key)
+	var key = _lock_key(item)
+	if _locked_items.has(key):
+		_locked_items.erase(key)
+		_remove_lock_overlay_from_item(item)
 		_play_click()
 	else:
-		_locked_items[file_key] = true
-		# Apply overlays to ALL items of this type in visible grids
-		_apply_overlays_for_file(file_key)
+		_locked_items[key] = true
+		_add_lock_overlay(item)
 		_play_click()
 	_save_locks()
 
@@ -431,6 +433,7 @@ func _add_lock_overlay(item: Item):
 	overlay.position = Vector2.ZERO
 	overlay.size = item.size
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.set_meta("lock_key", _lock_key(item))
 	item.add_child(overlay)
 	var border = ReferenceRect.new()
 	border.name = "QS_LockBorder"
@@ -454,24 +457,6 @@ func _remove_lock_overlay_from_item(item: Item):
 			overlay.queue_free()
 		_lock_overlays.erase(item_id)
 
-func _apply_overlays_for_file(file_key: String):
-	if _interface == null:
-		return
-	for grid in _get_all_visible_grids():
-		for child in grid.get_children():
-			if child is Item and child.slotData != null and child.slotData.itemData != null:
-				if child.slotData.itemData.file == file_key:
-					_add_lock_overlay(child)
-
-func _remove_overlays_for_file(file_key: String):
-	if _interface == null:
-		return
-	for grid in _get_all_visible_grids():
-		for child in grid.get_children():
-			if child is Item and child.slotData != null and child.slotData.itemData != null:
-				if child.slotData.itemData.file == file_key:
-					_remove_lock_overlay_from_item(child)
-
 func _get_all_visible_grids() -> Array:
 	var grids: Array = []
 	if _interface == null:
@@ -490,10 +475,31 @@ func _reapply_lock_overlays():
 	for grid in _get_all_visible_grids():
 		for child in grid.get_children():
 			if child is Item and child.slotData != null and child.slotData.itemData != null:
-				if _locked_items.has(child.slotData.itemData.file):
+				if _locked_items.has(_lock_key(child)):
 					var item_id = child.get_instance_id()
 					if not _lock_overlays.has(item_id) or not is_instance_valid(_lock_overlays[item_id]):
 						_add_lock_overlay(child)
+
+func _update_lock_positions():
+	# Track when items are manually dragged to new positions
+	var updates: Array = []
+	for item_id in _lock_overlays:
+		var overlay = _lock_overlays[item_id]
+		if not is_instance_valid(overlay):
+			continue
+		var item = overlay.get_parent()
+		if item == null or not (item is Item) or item.slotData == null or item.slotData.itemData == null:
+			continue
+		var old_key = overlay.get_meta("lock_key", "")
+		var new_key = _lock_key(item)
+		if old_key != "" and old_key != new_key:
+			updates.append([old_key, new_key, overlay])
+	for update in updates:
+		_locked_items.erase(update[0])
+		_locked_items[update[1]] = true
+		update[2].set_meta("lock_key", update[1])
+	if not updates.is_empty():
+		_save_locks()
 
 func _cleanup_stale_locks():
 	var stale: Array = []
@@ -505,8 +511,8 @@ func _cleanup_stale_locks():
 
 func _save_locks():
 	var config = ConfigFile.new()
-	for file_key in _locked_items:
-		config.set_value("locks", file_key, true)
+	for lock_key in _locked_items:
+		config.set_value("locks", lock_key, true)
 	config.save(LOCKS_SAVE_PATH)
 
 func _load_locks():
