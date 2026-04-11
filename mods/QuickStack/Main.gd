@@ -480,15 +480,15 @@ func _sort_grid(grid):
 	# Auto-stack: merge stackable items before placing
 	var merged: Array = _merge_stacks(items_data)
 
-	# Sort: largest area first, then widest, then tallest
+	# Sort: alphabetical by name, then largest area as tiebreaker
 	merged.sort_custom(func(a, b):
+		var name_a = a.itemData.name.to_lower()
+		var name_b = b.itemData.name.to_lower()
+		if name_a != name_b:
+			return name_a < name_b
 		var area_a = a.itemData.size.x * a.itemData.size.y
 		var area_b = b.itemData.size.x * b.itemData.size.y
-		if area_a != area_b:
-			return area_a > area_b
-		if a.itemData.size.x != b.itemData.size.x:
-			return a.itemData.size.x > b.itemData.size.x
-		return a.itemData.size.y > b.itemData.size.y
+		return area_a > area_b
 	)
 
 	# Re-create items in sorted order
