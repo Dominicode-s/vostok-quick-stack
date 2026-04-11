@@ -27,6 +27,10 @@ var _drag_start_pos: Vector2 = Vector2.ZERO
 var _drag_pending_grid = null
 const DRAG_THRESHOLD: float = 8.0
 
+# Item locking
+var _locked_items: Dictionary = {}  # item instance_id → true
+var _lock_overlays: Dictionary = {}  # item instance_id → ColorRect
+
 # MCM
 var _mcm_helpers = null
 const MCM_FILE_PATH = "user://MCM/QuickStackSort"
@@ -38,6 +42,14 @@ var cfg_mouse_btn: int = MOUSE_BUTTON_XBUTTON1  # Mouse 4
 
 const MOUSE_BTN_OPTIONS = ["Mouse 4 (Back)", "Mouse 5 (Forward)", "Middle Click"]
 const MOUSE_BTN_VALUES = [MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2, MOUSE_BUTTON_MIDDLE]
+
+# Lock hotkey config
+var cfg_lock_input_type: int = 1  # 0 = Keyboard, 1 = Mouse Button
+var cfg_lock_key: int = KEY_L
+var cfg_lock_mouse_btn: int = MOUSE_BUTTON_MIDDLE
+
+const LOCK_MOUSE_OPTIONS = ["Middle Click", "Mouse 4 (Back)", "Mouse 5 (Forward)"]
+const LOCK_MOUSE_VALUES = [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_XBUTTON1, MOUSE_BUTTON_XBUTTON2]
 
 const SORT_MODE_OPTIONS = ["Alphabetical", "Type", "Weight", "Value", "Size", "Rarity"]
 var cfg_sort_mode: int = 0  # Index into SORT_MODE_OPTIONS
@@ -63,6 +75,8 @@ func _process(_delta):
 			_container_injected = false
 			_inventory_injected = false
 			_cancel_drag_select()
+			_locked_items.clear()
+			_lock_overlays.clear()
 		var core_ui = scene.get_node_or_null("Core/UI")
 		if core_ui:
 			for child in core_ui.get_children():
@@ -127,6 +141,10 @@ func _process(_delta):
 		_drag_pending = false
 		_drag_pending_grid = null
 	_prev_ctrl_lmb = ctrl_lmb
+
+	# Periodically clean up locks for freed items
+	if not _locked_items.is_empty():
+		_cleanup_stale_locks()
 
 # ─── UI Injection ───
 
@@ -223,6 +241,26 @@ func _make_button(text: String, callback: Callable) -> Button:
 func _input(event):
 	if _interface == null:
 		return
+	# Lock toggle
+	if cfg_lock_input_type == 0:
+		if event is InputEventKey and event.pressed and not event.echo:
+			if event.keycode == cfg_lock_key:
+				var hover_grid = _interface.GetHoverGrid()
+				if hover_grid != null:
+					var item = _get_item_at_mouse(hover_grid)
+					if item != null:
+						_toggle_lock(item)
+						get_viewport().set_input_as_handled()
+						return
+	else:
+		if event is InputEventMouseButton and event.pressed and event.button_index == cfg_lock_mouse_btn:
+			var hover_grid = _interface.GetHoverGrid()
+			if hover_grid != null:
+				var item = _get_item_at_mouse(hover_grid)
+				if item != null:
+					_toggle_lock(item)
+					get_viewport().set_input_as_handled()
+					return
 	if cfg_input_type == 0:
 		# Keyboard mode
 		if event is InputEventKey and event.pressed and not event.echo:
@@ -321,8 +359,9 @@ func _finish_drag_select():
 	for item in _drag_selected:
 		if not is_instance_valid(item):
 			continue
-		# Skip items the game may have picked up (no longer in grid)
 		if item.get_parent() != _drag_source_grid:
+			continue
+		if _is_locked(item):
 			continue
 		if _interface.AutoStack(item.slotData, target_grid):
 			if is_instance_valid(item) and item.get_parent() == _drag_source_grid:
@@ -355,6 +394,78 @@ func _cancel_drag_select():
 	_drag_pending = false
 	_drag_pending_grid = null
 
+# ─── Item Locking ───
+
+func _is_locked(item: Item) -> bool:
+	return _locked_items.has(item.get_instance_id())
+
+func _toggle_lock(item: Item):
+	var id = item.get_instance_id()
+	if _locked_items.has(id):
+		_locked_items.erase(id)
+		_remove_lock_overlay(id)
+		_play_click()
+	else:
+		_locked_items[id] = true
+		_add_lock_overlay(item)
+		_play_click()
+
+func _add_lock_overlay(item: Item):
+	var id = item.get_instance_id()
+	if _lock_overlays.has(id) and is_instance_valid(_lock_overlays[id]):
+		return
+	var overlay = ColorRect.new()
+	overlay.name = "QS_Lock"
+	overlay.color = Color(1.0, 0.3, 0.3, 0.15)
+	overlay.position = Vector2.ZERO
+	overlay.size = item.size
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	item.add_child(overlay)
+	# Border via a framed StyleBox on a Panel child
+	var border = ReferenceRect.new()
+	border.name = "QS_LockBorder"
+	border.editor_only = false
+	border.border_color = Color(1.0, 0.35, 0.35, 0.7)
+	border.border_width = 1.5
+	border.position = Vector2.ZERO
+	border.size = item.size
+	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	item.add_child(border)
+	_lock_overlays[id] = overlay
+
+func _remove_lock_overlay(id: int):
+	if _lock_overlays.has(id):
+		var overlay = _lock_overlays[id]
+		if is_instance_valid(overlay):
+			# Also remove the border sibling
+			var item = overlay.get_parent()
+			if item:
+				var border = item.get_node_or_null("QS_LockBorder")
+				if border:
+					border.queue_free()
+			overlay.queue_free()
+		_lock_overlays.erase(id)
+
+func _cleanup_stale_locks():
+	var stale: Array = []
+	for id in _locked_items:
+		if not _lock_overlays.has(id) or not is_instance_valid(_lock_overlays[id]):
+			stale.append(id)
+	for id in stale:
+		_locked_items.erase(id)
+		_lock_overlays.erase(id)
+
+func _get_item_at_mouse(grid) -> Item:
+	if grid == null:
+		return null
+	var mouse_pos = grid.get_local_mouse_position()
+	for child in grid.get_children():
+		if child is Item:
+			var rect = Rect2(child.position, child.size)
+			if rect.has_point(mouse_pos):
+				return child
+	return null
+
 # ─── Quick Stack (Transfer) Logic ───
 
 func _on_quick_stack():
@@ -380,7 +491,7 @@ func _on_quick_stack():
 	var to_transfer: Array = []
 	for element in inv_grid.get_children():
 		if element is Item:
-			if container_files.has(element.slotData.itemData.file):
+			if container_files.has(element.slotData.itemData.file) and not _is_locked(element):
 				to_transfer.append(element)
 
 	if to_transfer.is_empty():
@@ -419,7 +530,7 @@ func _transfer_all(source_grid, target_grid, verb: String):
 
 	var items: Array = []
 	for element in source_grid.get_children():
-		if element is Item:
+		if element is Item and not _is_locked(element):
 			items.append(element)
 
 	if items.is_empty():
@@ -463,20 +574,24 @@ func _on_sort_inventory():
 	_sort_grid(_interface.inventoryGrid)
 
 func _sort_grid(grid):
-	# Collect all items and their slot data
+	# Collect unlocked items for sorting; locked items stay in place
 	var items_data: Array = []
 	var children = grid.get_children().duplicate()
+	var locked_items: Array = []
 	for element in children:
 		if element is Item:
-			items_data.append(element.slotData.duplicate())
+			if _is_locked(element):
+				locked_items.append(element)
+			else:
+				items_data.append(element.slotData.duplicate())
 
 	if items_data.is_empty():
 		_play_error()
 		return
 
-	# Remove all items from grid
+	# Remove only unlocked items from grid
 	for element in children:
-		if element is Item:
+		if element is Item and not _is_locked(element):
 			grid.Pick(element)
 			element.queue_free()
 
@@ -692,6 +807,32 @@ func _register_mcm():
 		"menu_pos" = 4
 	})
 
+	_config.set_value("Dropdown", "cfg_lock_input_type", {
+		"name" = "Lock Hotkey Type",
+		"tooltip" = "Use a keyboard key or mouse button to lock/unlock items",
+		"default" = 1,
+		"value" = 1,
+		"options" = ["Keyboard Key", "Mouse Button"],
+		"menu_pos" = 5
+	})
+
+	_config.set_value("Keycode", "cfg_lock_key", {
+		"name" = "Lock Key (Keyboard)",
+		"tooltip" = "Keyboard key to toggle lock on hovered item",
+		"default" = KEY_L,
+		"value" = KEY_L,
+		"menu_pos" = 6
+	})
+
+	_config.set_value("Dropdown", "cfg_lock_mouse_btn", {
+		"name" = "Lock Button (Mouse)",
+		"tooltip" = "Mouse button to toggle lock on hovered item",
+		"default" = 0,
+		"value" = 0,
+		"options" = LOCK_MOUSE_OPTIONS,
+		"menu_pos" = 7
+	})
+
 	if not FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
 		DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
 		_config.save(MCM_FILE_PATH + "/config.ini")
@@ -724,5 +865,9 @@ func _apply_mcm_config(config: ConfigFile):
 	cfg_sort_key = _mcm_val(config, "Keycode", "cfg_sort_key", cfg_sort_key)
 	var mouse_idx = _mcm_val(config, "Dropdown", "cfg_mouse_btn", 0)
 	cfg_mouse_btn = MOUSE_BTN_VALUES[clampi(mouse_idx, 0, MOUSE_BTN_VALUES.size() - 1)]
+	cfg_lock_input_type = _mcm_val(config, "Dropdown", "cfg_lock_input_type", cfg_lock_input_type)
+	cfg_lock_key = _mcm_val(config, "Keycode", "cfg_lock_key", cfg_lock_key)
+	var lock_mouse_idx = _mcm_val(config, "Dropdown", "cfg_lock_mouse_btn", 0)
+	cfg_lock_mouse_btn = LOCK_MOUSE_VALUES[clampi(lock_mouse_idx, 0, LOCK_MOUSE_VALUES.size() - 1)]
 	if cfg_input_type == 0:
 		_register_hotkey(cfg_sort_key)
