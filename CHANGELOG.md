@@ -1,5 +1,10 @@
 # Changelog
 
+### v2.2.0
+- Added 6 configurable sort modes via MCM: Alphabetical, Type, Weight, Value, Size, Rarity
+- Default sort is now Alphabetical (groups identical items together)
+- All modes use alphabetical name as tiebreaker
+
 ### v2.1.2
 - Fixed null crash during drag-select when grid is destroyed mid-operation
 - Added safety check after AutoStack to prevent operating on freed items
