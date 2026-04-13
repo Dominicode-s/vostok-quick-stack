@@ -262,6 +262,20 @@ func _matches_input(event: InputEvent, key_value: int, key_type: String) -> bool
 func _hotkey_sort():
 	if _interface == null:
 		return
+	# Defensive gate: only act when the inventory UI is actually open. Belt-
+	# and-braces against reports of sort firing during zone transitions or
+	# shelter exits. GetHoverGrid() should already return null in those
+	# cases, but we also check gameData.interface directly.
+	if not _is_inventory_ui_open():
+		return
+	# Never sort while the player is mid-consume/mid-use. The base game holds
+	# a direct `targetItem` reference across an `await` in Interface.Use();
+	# if we free that Item during the await, the game applies effects to a
+	# garbage slotData and the player can instantly die (e.g. "drank juice
+	# and pressed Z" → negative vitals → death).
+	if _is_player_occupied():
+		_play_error()
+		return
 	# Use GetHoverGrid() which checks mouse position against all visible grids
 	var hover_grid = _interface.GetHoverGrid()
 	if hover_grid == null:
@@ -272,6 +286,20 @@ func _hotkey_sort():
 		_on_sort_inventory()
 	elif hover_grid == con_grid:
 		_on_sort_container()
+
+func _is_inventory_ui_open() -> bool:
+	# gameData.interface is true while any inventory panel is visible.
+	if "interface" in gameData:
+		return bool(gameData.interface)
+	return false
+
+func _is_player_occupied() -> bool:
+	# True during consume/charge/heal progress bars and similar timed actions.
+	# Any grid mutation during this window races with base-game code that
+	# still holds direct Item node references.
+	if "isOccupied" in gameData:
+		return bool(gameData.isOccupied)
+	return false
 
 # ─── Ctrl+LMB Drag Select ───
 
@@ -320,6 +348,11 @@ func _finish_drag_select():
 	_clear_markers()
 
 	if _drag_selected.is_empty():
+		_drag_source_grid = null
+		return
+	if _is_player_occupied():
+		_play_error()
+		_drag_selected = []
 		_drag_source_grid = null
 		return
 
@@ -461,7 +494,12 @@ func _reapply_lock_overlays():
 						_add_lock_overlay(child)
 
 func _update_lock_positions():
-	# Track when items are manually dragged to new positions
+	# Track manual drags AND rotations. The overlay is a child of the Item
+	# node so it already moves with it, but we still need to (a) migrate the
+	# lock key when position/rotation changes the grid cell and (b) resize
+	# the overlay + border when the item's dimensions swap on rotation —
+	# otherwise the red highlight keeps the pre-rotation shape and looks
+	# stuck in the old cell.
 	var updates: Array = []
 	for item_id in _lock_overlays:
 		var overlay = _lock_overlays[item_id]
@@ -470,6 +508,12 @@ func _update_lock_positions():
 		var item = overlay.get_parent()
 		if item == null or not (item is Item) or item.slotData == null or item.slotData.itemData == null:
 			continue
+		# Sync size so rotation is visually reflected.
+		if overlay.size != item.size:
+			overlay.size = item.size
+			var border = item.get_node_or_null("QS_LockBorder")
+			if border:
+				border.size = item.size
 		var old_key = overlay.get_meta("lock_key", "")
 		var new_key = _lock_key(item)
 		if old_key != "" and old_key != new_key:
@@ -517,6 +561,9 @@ func _get_item_at_mouse(grid) -> Item:
 
 func _on_quick_stack():
 	if _interface == null or _interface.container == null:
+		return
+	if _is_player_occupied():
+		_play_error()
 		return
 
 	var inv_grid = _interface.inventoryGrid
@@ -574,6 +621,9 @@ func _transfer_all(source_grid, target_grid, verb: String):
 		return
 	if source_grid == null or target_grid == null:
 		return
+	if _is_player_occupied():
+		_play_error()
+		return
 
 	var items: Array = []
 	for element in source_grid.get_children():
@@ -621,6 +671,9 @@ func _on_sort_inventory():
 	_sort_grid(_interface.inventoryGrid)
 
 func _sort_grid(grid):
+	if _is_player_occupied():
+		_play_error()
+		return
 	# Collect unlocked items for sorting; locked items stay in place
 	var items_data: Array = []
 	var children = grid.get_children().duplicate()
@@ -849,16 +902,21 @@ func _register_mcm():
 		"menu_pos" = 3
 	})
 
-	# Migration: remove old dropdown entries from saved config
+	# Migration: remove stale entries from older versions
 	var _saved = ConfigFile.new()
 	if FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
 		_saved.load(MCM_FILE_PATH + "/config.ini")
-		var stale_keys = ["cfg_input_type", "cfg_mouse_btn", "cfg_lock_input_type", "cfg_lock_mouse_btn"]
 		var changed = false
-		for key in stale_keys:
+		var stale_dropdowns = ["cfg_input_type", "cfg_mouse_btn", "cfg_lock_input_type", "cfg_lock_mouse_btn"]
+		for key in stale_dropdowns:
 			if _saved.has_section_key("Dropdown", key):
 				_saved.erase_section_key("Dropdown", key)
 				changed = true
+		# Stack multiplier was removed in v2.5.1 — it was unreliable and the
+		# player complaints about medicals not stacking weren't worth fixing.
+		if _saved.has_section_key("Int", "cfg_stack_multiplier"):
+			_saved.erase_section_key("Int", "cfg_stack_multiplier")
+			changed = true
 		if changed:
 			_saved.save(MCM_FILE_PATH + "/config.ini")
 
