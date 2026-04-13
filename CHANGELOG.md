@@ -1,5 +1,14 @@
 # Changelog
 
+### v2.5.1
+- Removed the Stack Size Multiplier feature. Patching shared ItemData resources at runtime caused inconsistent behavior depending on load order and mod interactions, and the complexity wasn't worth it for a convenience feature. Existing MCM config entries are cleaned up automatically on load.
+
+### v2.5.0
+- **Fixed character instantly dying when sorting during a consume animation** — if you pressed the sort hotkey while mid-drink/mid-heal the base game was still holding a reference to the `Item` being consumed across an `await`. Our sort was freeing that node, so when the consume finished it applied garbage effect values and killed the player. All sort, transfer, take/store-all, and drag-select operations now bail out with an error click while `gameData.isOccupied` is true
+- **Fixed locked-item highlight keeping the wrong shape after rotation** — the red lock overlay now resizes to match the item's new dimensions when you rotate it before moving, so you no longer have to unlock and re-lock to clear a stale highlight
+- **Added: Stack Size Multiplier** (new MCM slider, 1–10) — makes single-use items (Consumables, Medical, Literature) stack up to N per cell. Weapons, ammo, attachments, and tools are untouched so base-game balance elsewhere stays intact. Takes effect on game start; changing the slider mid-session requires a restart to re-patch the item database
+- Defensive gate: the sort hotkey now verifies `gameData.interface` is open before acting, as belt-and-braces against reports of sort firing outside the inventory UI (unable to reproduce in code review — if the issue persists, please re-report with reproduction steps)
+
 ### v2.4.0
 - Simplified hotkey settings using MCM v2.4.0 native mouse button support on Keycode inputs
 - Sort and Lock hotkeys are now single Keycode entries — bind any key or mouse button directly
