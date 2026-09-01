@@ -18,6 +18,15 @@ var _last_scene: String = ""
 var _lib = null
 var _hooks_active: bool = false
 
+# Re-entrancy guard for the grid-rebuilding operations (sort, transfer,
+# quick stack). They snapshot slotData, Pick() + queue_free() the old
+# nodes, then re-Create from the snapshots -- but queue_free is deferred
+# to end of frame, so a second call fired before the frees land still
+# sees the doomed nodes as children, snapshots them a second time, and
+# re-creates duplicates. Reported as items multiplying and spilling out
+# of a container when the sort button is tapped rapidly.
+var _mutating: bool = false
+
 # UI state
 var _container_btns: HBoxContainer = null
 var _inventory_btns: HBoxContainer = null
@@ -657,6 +666,14 @@ func _get_item_at_mouse(grid) -> Item:
 # ─── Quick Stack (Transfer) Logic ───
 
 func _on_quick_stack():
+	if _mutating:
+		_play_error()
+		return
+	_mutating = true
+	_on_quick_stack_impl()
+	_mutating = false
+
+func _on_quick_stack_impl():
 	if _interface == null or _interface.container == null:
 		return
 	if _is_player_occupied():
@@ -714,6 +731,14 @@ func _on_store_all():
 	_transfer_all(_interface.inventoryGrid, _interface.containerGrid, "Stored")
 
 func _transfer_all(source_grid, target_grid, verb: String):
+	if _mutating:
+		_play_error()
+		return
+	_mutating = true
+	_transfer_all_impl(source_grid, target_grid, verb)
+	_mutating = false
+
+func _transfer_all_impl(source_grid, target_grid, verb: String):
 	if _interface == null or _interface.container == null:
 		return
 	if source_grid == null or target_grid == null:
@@ -768,6 +793,14 @@ func _on_sort_inventory():
 	_sort_grid(_interface.inventoryGrid)
 
 func _sort_grid(grid):
+	if _mutating:
+		_play_error()
+		return
+	_mutating = true
+	_sort_grid_impl(grid)
+	_mutating = false
+
+func _sort_grid_impl(grid):
 	if _is_player_occupied():
 		_play_error()
 		return
@@ -776,7 +809,7 @@ func _sort_grid(grid):
 	var children = grid.get_children().duplicate()
 	var locked_items: Array = []
 	for element in children:
-		if element is Item:
+		if element is Item and not element.is_queued_for_deletion():
 			if _is_locked(element):
 				locked_items.append(element)
 			else:

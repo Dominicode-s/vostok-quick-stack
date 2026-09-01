@@ -1,5 +1,10 @@
 # Changelog
 
+### v2.6.1 — Stop rapid sorting from duplicating items
+
+- **Fixed item duplication when the sort or transfer buttons are tapped quickly.** Sort, Transfer, Store All and Take All all work the same way: snapshot each item's `slotData`, `Pick()` + `queue_free()` the old nodes, then re-create from the snapshots. `queue_free()` is deferred to the end of the frame, so a second press landing before those frees complete still saw the doomed nodes as grid children, snapshotted them a second time, and re-created them — items multiplied and spilled out of the container. Reported against a medicine cabinet used for ammo storage, with the overflow tanking framerate.
+- All three grid-rebuilding paths now share a re-entrancy guard and refuse to start while another is mid-flight (you get the error click instead). The item-collection loop also skips any node already queued for deletion, which covers the same hazard across frame boundaries.
+
 ### v2.6.0 — Hook-driven Interface tracking
 
 - **Replaced the per-frame Interface scan with RTVModLib hooks.** Button injection now runs off `interface-open-post` / `interface-close-post` instead of polling `get_tree().current_scene`, walking `Core/UI` looking for a node with a `containerGrid`, and re-checking panel visibility every frame. `lib._caller` hands us the Interface node directly, and `Open()` is vanilla's single entry point for inventory, container, and trader modes (`UIManager.ToggleInterface` / `OpenContainer` / `OpenTrader` all route through it), so one hook covers every case.
