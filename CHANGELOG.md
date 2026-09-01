@@ -1,5 +1,10 @@
 # Changelog
 
+### v2.5.2 — MCM dependency declaration
+
+- **Declared Mod Configuration Menu as an optional dependency** (`[dependencies] optional=["doinkoink-mcm"]` in `mod.txt`). MCM is still detected at runtime via `MCM_Helpers.tres` and the mod runs fine without it, but the declaration makes the loader mount MCM before this mod's autoload reaches `_register_mcm()`, closing a load-order race that could leave the config page unregistered.
+- No gameplay change.
+
 ### v2.5.1
 - Removed the Stack Size Multiplier feature. Patching shared ItemData resources at runtime caused inconsistent behavior depending on load order and mod interactions, and the complexity wasn't worth it for a convenience feature. Existing MCM config entries are cleaned up automatically on load.
 
