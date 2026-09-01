@@ -1,5 +1,13 @@
 # Changelog
 
+### v2.6.0 — Hook-driven Interface tracking
+
+- **Replaced the per-frame Interface scan with RTVModLib hooks.** Button injection now runs off `interface-open-post` / `interface-close-post` instead of polling `get_tree().current_scene`, walking `Core/UI` looking for a node with a `containerGrid`, and re-checking panel visibility every frame. `lib._caller` hands us the Interface node directly, and `Open()` is vanilla's single entry point for inventory, container, and trader modes (`UIManager.ToggleInterface` / `OpenContainer` / `OpenTrader` all route through it), so one hook covers every case.
+- **`_process` now does only what genuinely needs a frame tick**: the Ctrl+LMB drag-select input state machine, and lock-overlay position tracking — the latter now gated on the inventory actually being open rather than running whenever any lock exists.
+- **Fixed a latent crash on scene change.** `_interface` is now dropped as soon as the node goes invalid. The old scene-name comparison caught this incidentally; with hooks there is no per-frame scan to notice, so a dangling `GetHoverGrid()` call would have hit a freed node.
+- Falls back to the original polling path on loaders without the hook API, so this is not a hard Metro Mod Loader 3.x requirement.
+- No user-facing change: sort, transfer, take/store all, drag-select, and item locking all behave identically.
+
 ### v2.5.2 — MCM dependency declaration
 
 - **Declared Mod Configuration Menu as an optional dependency** (`[dependencies] optional=["doinkoink-mcm"]` in `mod.txt`). MCM is still detected at runtime via `MCM_Helpers.tres` and the mod runs fine without it, but the declaration makes the loader mount MCM before this mod's autoload reaches `_register_mcm()`, closing a load-order race that could leave the config page unregistered.

@@ -1,6 +1,6 @@
 extends Node
 
-# Quick Stack & Sort — Pure autoload, no script overrides
+# Quick Stack & Sort — autoload + RTVModLib hooks
 # Container: Sort button (sorts + auto-stacks)
 # Inventory: Sort button + Transfer button (quick stack to container)
 # MCM: configurable hotkey for sort (applies to hovered grid)
@@ -9,6 +9,14 @@ var gameData = preload("res://Resources/GameData.tres")
 
 var _interface = null
 var _last_scene: String = ""
+
+# RTVModLib hook state. When the hook API is available, Interface discovery
+# and button injection run off interface-open-post / interface-close-post
+# instead of the per-frame scan. _hooks_active stays false on loaders without
+# the hook API and _process falls back to the original polling path, so the
+# mod still works for anyone who has not upgraded.
+var _lib = null
+var _hooks_active: bool = false
 
 # UI state
 var _container_btns: HBoxContainer = null
@@ -56,8 +64,101 @@ func _ready():
 		_register_mcm()
 	_register_hotkey(cfg_sort_key, cfg_sort_key_type)
 	_load_locks()
+	_connect_lib()
+
+# ─── RTVModLib hooks ───
+
+func _connect_lib() -> void:
+	if not Engine.has_meta("RTVModLib"):
+		return
+	var lib = Engine.get_meta("RTVModLib")
+	if lib._is_ready:
+		_on_lib_ready()
+	else:
+		lib.frameworks_ready.connect(_on_lib_ready)
+
+func _on_lib_ready() -> void:
+	_lib = Engine.get_meta("RTVModLib", null)
+	if _lib == null:
+		return
+	# Open  → Interface is live and its panels have finished showing, so this
+	#         is the point to read visibility and build the button rows.
+	# Close → panels are down and Interface.container has been nulled.
+	_lib.hook("interface-open-post", _hook_interface_open_post)
+	_lib.hook("interface-close-post", _hook_interface_close_post)
+	_hooks_active = true
+
+func _hook_interface_open_post() -> void:
+	if _lib == null:
+		return
+	# _caller is the Interface node whose Open() just ran — no tree scan needed.
+	_interface = _lib._caller
+	if _interface == null:
+		return
+	# Open() is the single entry point for plain inventory, container, and
+	# trader (UIManager.ToggleInterface / OpenContainer / OpenTrader all call
+	# it), so a full rebuild covers every mode and the container-opened-while-
+	# inventory-already-injected case in one path.
+	_rebuild_buttons()
+	# Item nodes are destroyed on scene change; drop overlays pointing at them
+	# before re-attaching to whatever the new grids hold.
+	_cleanup_stale_locks()
+	if not _locked_items.is_empty():
+		_reapply_lock_overlays()
+
+func _hook_interface_close_post() -> void:
+	_teardown_buttons()
+	_cancel_drag_select()
+
+func _rebuild_buttons() -> void:
+	_teardown_buttons()
+	if _interface == null:
+		return
+	var container_ui = _interface.get_node_or_null("Container")
+	var inventory_ui = _interface.get_node_or_null("Inventory")
+	var container_open = container_ui != null and container_ui.visible and _interface.container != null
+	if container_open:
+		_inject_container_buttons(container_ui)
+	if inventory_ui != null and inventory_ui.visible:
+		_inject_inventory_buttons(inventory_ui, container_open)
+
+func _teardown_buttons() -> void:
+	if _container_btns:
+		_remove_node(_container_btns)
+	_container_btns = null
+	_container_injected = false
+	if _inventory_btns:
+		_remove_node(_inventory_btns)
+	_inventory_btns = null
+	_inventory_injected = false
 
 func _process(_delta):
+	# On a scene change the Interface node is freed. The legacy path caught
+	# this via its scene-name check; the hook path only hears about the NEXT
+	# Open(), so until then _interface is a dangling reference and calling
+	# GetHoverGrid() on it would crash. Drop it as soon as it goes invalid.
+	if _interface != null and not is_instance_valid(_interface):
+		_interface = null
+		_teardown_buttons()
+		_cancel_drag_select()
+		_lock_overlays.clear()
+	if not _hooks_active:
+		_legacy_discover_and_inject()
+	if _interface == null:
+		return
+
+	_drag_select_tick()
+
+	# Lock overlay maintenance. Only meaningful while a panel is actually
+	# open — with the UI down the grids hold no Item nodes to track.
+	if not _locked_items.is_empty() and _is_inventory_ui_open():
+		_reapply_lock_overlays()
+		_update_lock_positions()
+		_cleanup_stale_locks()
+
+# Pre-hook fallback: the original per-frame tree scan and open/close polling.
+# Only runs on loaders without the RTVModLib hook API.
+func _legacy_discover_and_inject() -> void:
 	# Find Interface (under Core/UI in map scenes)
 	if _interface == null:
 		var scene = get_tree().current_scene
@@ -112,7 +213,9 @@ func _process(_delta):
 		if store_all:
 			store_all.visible = container_open
 
-	# Ctrl+LMB drag-select (all in _process to avoid input conflicts with game)
+# Ctrl+LMB drag-select. Stays per-frame: it is an input state machine, not
+# something a vanilla method boundary can drive.
+func _drag_select_tick() -> void:
 	var ctrl_lmb = Input.is_key_pressed(KEY_CTRL) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	if ctrl_lmb and not _prev_ctrl_lmb and not _drag_selecting and not _drag_pending:
 		var hover_grid = _interface.GetHoverGrid()
@@ -136,12 +239,6 @@ func _process(_delta):
 		_drag_pending = false
 		_drag_pending_grid = null
 	_prev_ctrl_lmb = ctrl_lmb
-
-	# Re-apply lock overlays after scene transitions & track position changes
-	if not _locked_items.is_empty():
-		_reapply_lock_overlays()
-		_update_lock_positions()
-		_cleanup_stale_locks()
 
 # ─── UI Injection ───
 
@@ -236,7 +333,7 @@ func _make_button(text: String, callback: Callable) -> Button:
 # ─── Input handler (more reliable than polling in _process) ───
 
 func _input(event):
-	if _interface == null:
+	if _interface == null or not is_instance_valid(_interface):
 		return
 	# Lock toggle
 	if _matches_input(event, cfg_lock_key, cfg_lock_key_type):
