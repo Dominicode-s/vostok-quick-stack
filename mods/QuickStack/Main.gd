@@ -1,6 +1,6 @@
 extends Node
 
-# Quick Stack & Sort — autoload + RTVModLib hooks
+# Quick Stack & Sort: autoload + RTVModLib hooks
 # Container: Sort button (sorts + auto-stacks)
 # Inventory: Sort button + Transfer button (quick stack to container)
 # MCM: configurable hotkey for sort (applies to hovered grid)
@@ -64,8 +64,6 @@ var cfg_lock_key_type: String = "Mouse"
 const SORT_MODE_OPTIONS = ["Alphabetical", "Type", "Weight", "Value", "Size", "Rarity"]
 var cfg_sort_mode: int = 0  # Index into SORT_MODE_OPTIONS
 
-# ─── Initialization ───
-
 func _ready():
 	Engine.set_meta("QuickStackMain", self)
 	_mcm_helpers = _try_load_mcm()
@@ -74,8 +72,6 @@ func _ready():
 	_register_hotkey(cfg_sort_key, cfg_sort_key_type)
 	_load_locks()
 	_connect_lib()
-
-# ─── RTVModLib hooks ───
 
 func _connect_lib() -> void:
 	if not Engine.has_meta("RTVModLib"):
@@ -100,7 +96,7 @@ func _on_lib_ready() -> void:
 func _hook_interface_open_post() -> void:
 	if _lib == null:
 		return
-	# _caller is the Interface node whose Open() just ran — no tree scan needed.
+	# _caller is the Interface node whose Open() just ran; no tree scan needed.
 	_interface = _lib._caller
 	if _interface == null:
 		return
@@ -159,7 +155,7 @@ func _process(_delta):
 	_drag_select_tick()
 
 	# Lock overlay maintenance. Only meaningful while a panel is actually
-	# open — with the UI down the grids hold no Item nodes to track.
+	# open; with the UI down the grids hold no Item nodes to track.
 	if not _locked_items.is_empty() and _is_inventory_ui_open():
 		_reapply_lock_overlays()
 		_update_lock_positions()
@@ -179,7 +175,7 @@ func _legacy_discover_and_inject() -> void:
 			_container_injected = false
 			_inventory_injected = false
 			_cancel_drag_select()
-			# Clear overlays — Item nodes are destroyed on scene change
+			# Clear overlays; Item nodes are destroyed on scene change
 			# _locked_items persists (keyed by itemData.file)
 			_lock_overlays.clear()
 		var core_ui = scene.get_node_or_null("Core/UI")
@@ -192,13 +188,11 @@ func _legacy_discover_and_inject() -> void:
 	if _interface == null:
 		return
 
-	# Track container open/close for button injection
 	var container_ui = _interface.get_node_or_null("Container")
 	var inventory_ui = _interface.get_node_or_null("Inventory")
 	var container_open = container_ui != null and container_ui.visible and _interface.container != null
 	var inventory_open = inventory_ui != null and inventory_ui.visible
 
-	# Container buttons: Sort only
 	if container_open and not _container_injected:
 		_inject_container_buttons(container_ui)
 	elif not container_open and _container_injected:
@@ -206,14 +200,12 @@ func _legacy_discover_and_inject() -> void:
 		_container_btns = null
 		_container_injected = false
 
-	# Inventory buttons: Sort + Transfer (transfer only when container is open)
 	if inventory_open and not _inventory_injected:
 		_inject_inventory_buttons(inventory_ui, container_open)
 	elif not inventory_open and _inventory_injected:
 		_remove_node(_inventory_btns)
 		_inventory_btns = null
 		_inventory_injected = false
-	# Update transfer button visibility when container opens/closes
 	elif _inventory_injected and _inventory_btns:
 		var transfer = _inventory_btns.get_node_or_null("TransferBtn")
 		var store_all = _inventory_btns.get_node_or_null("StoreAllBtn")
@@ -248,8 +240,6 @@ func _drag_select_tick() -> void:
 		_drag_pending = false
 		_drag_pending_grid = null
 	_prev_ctrl_lmb = ctrl_lmb
-
-# ─── UI Injection ───
 
 func _inject_container_buttons(container_ui):
 	# Container Header: y=-32 to 0, width=256
@@ -339,12 +329,10 @@ func _make_button(text: String, callback: Callable) -> Button:
 	btn.focus_mode = Control.FOCUS_NONE
 	return btn
 
-# ─── Input handler (more reliable than polling in _process) ───
-
+# More reliable than polling in _process
 func _input(event):
 	if _interface == null or not is_instance_valid(_interface):
 		return
-	# Lock toggle
 	if _matches_input(event, cfg_lock_key, cfg_lock_key_type):
 		var hover_grid = _interface.GetHoverGrid()
 		if hover_grid != null:
@@ -353,7 +341,6 @@ func _input(event):
 				_toggle_lock(item)
 				get_viewport().set_input_as_handled()
 				return
-	# Sort hotkey
 	if _matches_input(event, cfg_sort_key, cfg_sort_key_type):
 		_hotkey_sort()
 
@@ -362,8 +349,6 @@ func _matches_input(event: InputEvent, key_value: int, key_type: String) -> bool
 		return event is InputEventMouseButton and event.pressed and event.button_index == key_value
 	else:
 		return event is InputEventKey and event.pressed and not event.echo and event.keycode == key_value
-
-# ─── Hotkey Sort ───
 
 func _hotkey_sort():
 	if _interface == null:
@@ -382,7 +367,6 @@ func _hotkey_sort():
 	if _is_player_occupied():
 		_play_error()
 		return
-	# Use GetHoverGrid() which checks mouse position against all visible grids
 	var hover_grid = _interface.GetHoverGrid()
 	if hover_grid == null:
 		return
@@ -406,8 +390,6 @@ func _is_player_occupied() -> bool:
 	if "isOccupied" in gameData:
 		return bool(gameData.isOccupied)
 	return false
-
-# ─── Ctrl+LMB Drag Select ───
 
 func _start_drag_select(grid):
 	_drag_selecting = true
@@ -437,7 +419,6 @@ func _add_selection_marker(item: Item):
 	# Add marker to the parent UI panel (Container/Inventory), not the grid
 	var panel = _drag_source_grid.get_parent()
 	if panel:
-		# Convert grid-local position to panel-local position
 		marker.position = _drag_source_grid.position + item.position
 		panel.add_child(marker)
 		marker.z_index = 10
@@ -517,8 +498,6 @@ func _cancel_drag_select():
 	_drag_source_grid = null
 	_drag_pending = false
 	_drag_pending_grid = null
-
-# ─── Item Locking ───
 
 func _lock_key(item: Item) -> String:
 	return item.slotData.itemData.file + "|" + str(int(item.position.x)) + "," + str(int(item.position.y))
@@ -603,7 +582,7 @@ func _update_lock_positions():
 	# Track manual drags AND rotations. The overlay is a child of the Item
 	# node so it already moves with it, but we still need to (a) migrate the
 	# lock key when position/rotation changes the grid cell and (b) resize
-	# the overlay + border when the item's dimensions swap on rotation —
+	# the overlay + border when the item's dimensions swap on rotation;
 	# otherwise the red highlight keeps the pre-rotation shape and looks
 	# stuck in the old cell.
 	var updates: Array = []
@@ -663,8 +642,6 @@ func _get_item_at_mouse(grid) -> Item:
 				return child
 	return null
 
-# ─── Quick Stack (Transfer) Logic ───
-
 func _on_quick_stack():
 	if _mutating:
 		_play_error()
@@ -685,7 +662,6 @@ func _on_quick_stack_impl():
 	if inv_grid == null or con_grid == null:
 		return
 
-	# Build set of item files already in the container
 	var container_files: Dictionary = {}
 	for element in con_grid.get_children():
 		if element is Item:
@@ -695,7 +671,6 @@ func _on_quick_stack_impl():
 		_play_error()
 		return
 
-	# Collect inventory items that match container contents
 	var to_transfer: Array = []
 	for element in inv_grid.get_children():
 		if element is Item:
@@ -721,8 +696,6 @@ func _on_quick_stack_impl():
 		_flash_result("Transferred %d items" % transferred)
 	else:
 		_play_error()
-
-# ─── Transfer All Logic ───
 
 func _on_take_all():
 	_transfer_all(_interface.containerGrid, _interface.inventoryGrid, "Took")
@@ -759,7 +732,6 @@ func _transfer_all_impl(source_grid, target_grid, verb: String):
 	var transferred: int = 0
 	var failed: int = 0
 	for item in items:
-		# Try stacking first, then placing
 		if _interface.AutoStack(item.slotData, target_grid):
 			source_grid.Pick(item)
 			item.queue_free()
@@ -779,8 +751,6 @@ func _transfer_all_impl(source_grid, target_grid, verb: String):
 	else:
 		_play_error()
 		_flash_result("No room!")
-
-# ─── Sort Logic (sort + auto-stack) ───
 
 func _on_sort_container():
 	if _interface == null or _interface.container == null:
@@ -819,19 +789,15 @@ func _sort_grid_impl(grid):
 		_play_error()
 		return
 
-	# Remove only unlocked items from grid
 	for element in children:
 		if element is Item and not _is_locked(element):
 			grid.Pick(element)
 			element.queue_free()
 
-	# Auto-stack: merge stackable items before placing
 	var merged: Array = _merge_stacks(items_data)
 
-	# Sort items based on MCM sort mode
 	merged.sort_custom(_compare_items)
 
-	# Re-create items in sorted order
 	var placed: int = 0
 	var dropped: int = 0
 	for slot_data in merged:
@@ -874,7 +840,6 @@ func _compare_items(a, b) -> bool:
 	return a.itemData.name.to_lower() < b.itemData.name.to_lower()
 
 func _merge_stacks(items: Array) -> Array:
-	# Group stackable items by file, merge amounts
 	var stacks: Dictionary = {}
 	var result: Array = []
 
@@ -887,7 +852,6 @@ func _merge_stacks(items: Array) -> Array:
 		else:
 			result.append(slot)
 
-	# Merge each stackable group into minimum number of full stacks
 	for file in stacks:
 		var group = stacks[file]
 		var total_amount: int = 0
@@ -904,8 +868,6 @@ func _merge_stacks(items: Array) -> Array:
 
 	return result
 
-# ─── Audio & UI helpers ───
-
 func _play_click():
 	if _interface and _interface.has_method("PlayClick"):
 		_interface.PlayClick()
@@ -919,15 +881,12 @@ func _update_ui():
 		_interface.UpdateUIDetails()
 		_interface.UpdateStats(true)
 
-# ─── Status Flash ───
-
 var _flash_panel: PanelContainer = null
 var _flash_label: Label = null
 var _flash_tween: Tween = null
 
 func _flash_result(text: String):
 	if _flash_panel == null:
-		# Background panel
 		_flash_panel = PanelContainer.new()
 		_flash_panel.name = "QuickStackFlash"
 
@@ -941,7 +900,6 @@ func _flash_result(text: String):
 		style.content_margin_right = 12
 		_flash_panel.add_theme_stylebox_override("panel", style)
 
-		# Label inside
 		_flash_label = Label.new()
 		_flash_label.add_theme_font_size_override("font_size", 12)
 		_flash_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
@@ -974,14 +932,9 @@ func _flash_result(text: String):
 	if _flash_tween and _flash_tween.is_valid():
 		_flash_tween.kill()
 	_flash_tween = create_tween()
-	# Fade in
 	_flash_tween.tween_property(_flash_panel, "modulate", Color(1, 1, 1, 1), 0.15)
-	# Hold
 	_flash_tween.tween_interval(1.2)
-	# Fade out
 	_flash_tween.tween_property(_flash_panel, "modulate", Color(1, 1, 1, 0), 0.4)
-
-# ─── Hotkey Registration ───
 
 func _register_hotkey(key_value: int, key_type: String):
 	if not InputMap.has_action(SORT_ACTION):
@@ -996,8 +949,6 @@ func _register_hotkey(key_value: int, key_type: String):
 		var ev = InputEventKey.new()
 		ev.keycode = key_value
 		InputMap.action_add_event(SORT_ACTION, ev)
-
-# ─── MCM Integration ───
 
 func _try_load_mcm():
 	if ResourceLoader.exists("res://ModConfigurationMenu/Scripts/Doink Oink/MCM_Helpers.tres"):
@@ -1018,7 +969,7 @@ func _register_mcm():
 
 	_config.set_value("Keycode", "cfg_sort_key", {
 		"name" = "Sort Hotkey",
-		"tooltip" = "Key or mouse button to sort the hovered grid",
+		"tooltip" = "Sort the hovered grid",
 		"default" = KEY_Z, "default_type" = "Key",
 		"value" = KEY_Z, "type" = "Key",
 		"menu_pos" = 2
@@ -1026,7 +977,7 @@ func _register_mcm():
 
 	_config.set_value("Keycode", "cfg_lock_key", {
 		"name" = "Lock Hotkey",
-		"tooltip" = "Key or mouse button to toggle lock on hovered item",
+		"tooltip" = "Toggle lock on hovered item",
 		"default" = MOUSE_BUTTON_MIDDLE, "default_type" = "Mouse",
 		"value" = MOUSE_BUTTON_MIDDLE, "type" = "Mouse",
 		"menu_pos" = 3
@@ -1042,7 +993,7 @@ func _register_mcm():
 			if _saved.has_section_key("Dropdown", key):
 				_saved.erase_section_key("Dropdown", key)
 				changed = true
-		# Stack multiplier was removed in v2.5.1 — it was unreliable and the
+		# Stack multiplier was removed in v2.5.1; it was unreliable and the
 		# player complaints about medicals not stacking weren't worth fixing.
 		if _saved.has_section_key("Int", "cfg_stack_multiplier"):
 			_saved.erase_section_key("Int", "cfg_stack_multiplier")
